@@ -26,7 +26,7 @@ public final class WaitingNotifier {
             content.body = body
             content.sound = .default
             let req = UNNotificationRequest(
-                identifier: "claude-waiting-\(session.pid)-\(Int(session.updatedAt.timeIntervalSince1970))",
+                identifier: "claude-waiting-\(session.pid)-\(Int(Date().timeIntervalSince1970 * 1000))",
                 content: content, trigger: nil
             )
             UNUserNotificationCenter.current().add(req)
