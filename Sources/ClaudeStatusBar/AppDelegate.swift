@@ -8,6 +8,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private lazy var watcher = SessionWatcher(store: store)
     private let notifier = WaitingNotifier()
     private var detector = WaitingTransitionDetector()
+    private var reminderTracker = WaitingReminderTracker()
+    private var reminderTimer: DispatchSourceTimer?
     private var cancellables = Set<AnyCancellable>()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -34,11 +36,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         watcher.start()
         usageTracker.start()
+
+        let t = DispatchSource.makeTimerSource(queue: .main)
+        t.schedule(deadline: .now() + 5.0, repeating: 5.0)
+        t.setEventHandler { [weak self] in
+            guard let self else { return }
+            for s in self.reminderTracker.tick(sessions: self.store.sessions, now: Date()) {
+                self.notifier.notify(session: s)
+            }
+        }
+        t.resume()
+        reminderTimer = t
     }
 
     func applicationWillTerminate(_ notification: Notification) {
         watcher.stop()
         usageTracker.stop()
+        reminderTimer?.cancel()
+        reminderTimer = nil
     }
 
     private func refreshIcon() {
