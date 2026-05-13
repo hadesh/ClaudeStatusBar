@@ -1,0 +1,2 @@
+# ClaudeStatusBar
+ClaudeStatusBar
