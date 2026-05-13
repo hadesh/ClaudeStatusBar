@@ -29,9 +29,22 @@ public struct WaitingReminderTracker {
     public mutating func tick(sessions: [Session], now: Date) -> [Session] {
         let waitingPids = Set(sessions.filter { $0.status == .waiting }.map(\.pid))
         state = state.filter { waitingPids.contains($0.key) }
-        for s in sessions where s.status == .waiting && state[s.pid] == nil {
-            state[s.pid] = PerPid(firstSeenAt: now, lastNotifiedAt: nil, remindersFired: 0)
+        var out: [Session] = []
+        for s in sessions where s.status == .waiting {
+            guard var perPid = state[s.pid] else {
+                state[s.pid] = PerPid(firstSeenAt: now, lastNotifiedAt: nil, remindersFired: 0)
+                continue
+            }
+            guard perPid.remindersFired < config.maxReminders else { continue }
+            let waited = now.timeIntervalSince(perPid.firstSeenAt)
+            guard waited >= config.initialDelay else { continue }
+            let lastFired = perPid.lastNotifiedAt ?? .distantPast
+            guard now.timeIntervalSince(lastFired) >= config.interval else { continue }
+            perPid.remindersFired += 1
+            perPid.lastNotifiedAt = now
+            state[s.pid] = perPid
+            out.append(s)
         }
-        return []
+        return out
     }
 }

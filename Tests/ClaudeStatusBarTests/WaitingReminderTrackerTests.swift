@@ -17,4 +17,20 @@ final class WaitingReminderTrackerTests: XCTestCase {
         let s = makeSession(pid: 1)
         XCTAssertEqual(tracker.tick(sessions: [s], now: t0).map(\.pid), [])
     }
+
+    func testReminderFiresAfterInitialDelay() {
+        var tracker = WaitingReminderTracker(config: cfg)
+        let s = makeSession(pid: 1)
+        _ = tracker.tick(sessions: [s], now: t0)
+        XCTAssertEqual(
+            tracker.tick(sessions: [s], now: t0.addingTimeInterval(29)).map(\.pid),
+            [],
+            "1 s short of delay → no reminder"
+        )
+        XCTAssertEqual(
+            tracker.tick(sessions: [s], now: t0.addingTimeInterval(30)).map(\.pid),
+            [1],
+            "exactly at delay → reminder"
+        )
+    }
 }
