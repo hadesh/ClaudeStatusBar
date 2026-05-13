@@ -33,4 +33,24 @@ final class WaitingReminderTrackerTests: XCTestCase {
             "exactly at delay → reminder"
         )
     }
+
+    func testFiresRepeatedlyUpToMax() {
+        var tracker = WaitingReminderTracker(config: cfg)
+        let s = makeSession(pid: 1)
+        _ = tracker.tick(sessions: [s], now: t0)
+        XCTAssertEqual(tracker.tick(sessions: [s], now: t0.addingTimeInterval(30)).map(\.pid), [1], "1st")
+        XCTAssertEqual(tracker.tick(sessions: [s], now: t0.addingTimeInterval(60)).map(\.pid), [1], "2nd")
+        XCTAssertEqual(tracker.tick(sessions: [s], now: t0.addingTimeInterval(90)).map(\.pid), [1], "3rd")
+        XCTAssertEqual(tracker.tick(sessions: [s], now: t0.addingTimeInterval(120)).map(\.pid), [], "stop after max")
+        XCTAssertEqual(tracker.tick(sessions: [s], now: t0.addingTimeInterval(1000)).map(\.pid), [], "still stopped")
+    }
+
+    func testRespectsIntervalBetweenReminders() {
+        var tracker = WaitingReminderTracker(config: cfg)
+        let s = makeSession(pid: 1)
+        _ = tracker.tick(sessions: [s], now: t0)
+        _ = tracker.tick(sessions: [s], now: t0.addingTimeInterval(30))   // 1st reminder
+        XCTAssertEqual(tracker.tick(sessions: [s], now: t0.addingTimeInterval(45)).map(\.pid), [], "too early")
+        XCTAssertEqual(tracker.tick(sessions: [s], now: t0.addingTimeInterval(60)).map(\.pid), [1], "interval reached")
+    }
 }
