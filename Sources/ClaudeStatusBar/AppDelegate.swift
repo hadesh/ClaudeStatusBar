@@ -23,12 +23,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
             .store(in: &cancellables)
 
-        Publishers.CombineLatest(store.$sessions, usageTracker.$usage)
+        Publishers.CombineLatest(store.$sessions, usageTracker.$lifetimeByModel)
             .receive(on: DispatchQueue.main)
-            .sink { [weak self] sessions, usage in
+            .sink { [weak self] sessions, lifetime in
                 guard let self else { return }
                 self.refreshIcon()
-                self.rebuildMenu(with: sessions, usage: usage)
+                self.rebuildMenu(with: sessions, lifetime: lifetime)
             }
             .store(in: &cancellables)
 
@@ -45,7 +45,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         statusItem?.button?.image = StatusIcon.image(for: store.aggregateStatus)
     }
 
-    private func rebuildMenu(with sessions: [Session], usage: DailyUsage) {
+    private func rebuildMenu(with sessions: [Session], lifetime: [ModelLifetimeUsage]) {
         let menu = NSMenu()
 
         let header = NSMenuItem(
@@ -70,7 +70,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         menu.addItem(.separator())
-        appendUsageItems(to: menu, usage: usage)
+        appendLifetimeItems(to: menu, lifetime: lifetime)
         menu.addItem(.separator())
         menu.addItem(
             withTitle: "Quit",
@@ -80,30 +80,38 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         statusItem?.menu = menu
     }
 
-    private func appendUsageItems(to menu: NSMenu, usage: DailyUsage) {
-        let today = UsageTracker.todayString()
-        let label = usage.date == today ? "今日" : "最近 (\(usage.date))"
-        let title = "\(label) · \(usage.messageCount) 消息 · \(formatTokens(usage.totalTokens)) tokens"
-        let header = NSMenuItem(title: title, action: nil, keyEquivalent: "")
+    private func appendLifetimeItems(to menu: NSMenu, lifetime: [ModelLifetimeUsage]) {
+        let header = NSMenuItem(title: "总用量 (按模型)", action: nil, keyEquivalent: "")
         header.isEnabled = false
         menu.addItem(header)
 
-        if usage.totalCostUSD > 0 {
+        let totalCombined = lifetime.reduce(0) { $0 + $1.combined }
+        guard totalCombined > 0 else {
+            let empty = NSMenuItem(title: "  (无数据)", action: nil, keyEquivalent: "")
+            empty.isEnabled = false
+            menu.addItem(empty)
+            return
+        }
+
+        for u in lifetime {
+            let pct = Double(u.combined) / Double(totalCombined) * 100
+            let pctStr = String(format: "%.1f%%", pct)
+            let title = "\(u.model)  \(pctStr)  In \(formatTokens(u.inputTokens)) · Out \(formatTokens(u.outputTokens))"
+            let item = NSMenuItem(title: title, action: nil, keyEquivalent: "")
+            item.isEnabled = false
+            item.indentationLevel = 1
+            menu.addItem(item)
+        }
+
+        let totalCost = lifetime.reduce(0.0) { $0 + $1.costUSD }
+        if totalCost > 0 {
             let cost = NSMenuItem(
-                title: String(format: "  累计费用 $%.2f", usage.totalCostUSD),
+                title: String(format: "累计费用 $%.2f", totalCost),
                 action: nil, keyEquivalent: ""
             )
             cost.isEnabled = false
+            cost.indentationLevel = 1
             menu.addItem(cost)
-        }
-
-        for (model, tokens) in usage.tokensByModel.sorted(by: { $0.value > $1.value }) {
-            let item = NSMenuItem(
-                title: "  \(model): \(formatTokens(tokens))",
-                action: nil, keyEquivalent: ""
-            )
-            item.isEnabled = false
-            menu.addItem(item)
         }
     }
 
@@ -116,7 +124,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func makeSessionItem(_ s: Session) -> NSMenuItem {
         let badge: String
         switch s.status {
-        case .idle: badge = "◌"
+        case .idle: badge = "○"
         case .busy: badge = "●"
         case .waiting: badge = "⚠"
         }
