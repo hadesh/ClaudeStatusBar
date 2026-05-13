@@ -10,6 +10,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var detector = WaitingTransitionDetector()
     private var reminderTracker = WaitingReminderTracker()
     private var reminderTimer: DispatchSourceTimer?
+    private let loginItem = LoginItemController()
     private var cancellables = Set<AnyCancellable>()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -86,6 +87,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         menu.addItem(.separator())
         appendLifetimeItems(to: menu, lifetime: lifetime)
+        if LoginItemController.isAvailable {
+            let item = NSMenuItem(
+                title: "开机自启",
+                action: #selector(toggleLoginItem(_:)),
+                keyEquivalent: ""
+            )
+            item.target = self
+            item.state = loginItem.isEnabled ? .on : .off
+            menu.addItem(item)
+        }
         menu.addItem(.separator())
         menu.addItem(
             withTitle: "Quit",
@@ -169,5 +180,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc private func openCwd(_ sender: NSMenuItem) {
         guard let path = sender.representedObject as? String else { return }
         NSWorkspace.shared.open(URL(fileURLWithPath: path))
+    }
+
+    @objc private func toggleLoginItem(_ sender: NSMenuItem) {
+        do {
+            try loginItem.setEnabled(!loginItem.isEnabled)
+        } catch {
+            NSLog("Toggle login item failed: \(error)")
+        }
+        rebuildMenu(with: store.sessions, lifetime: usageTracker.lifetimeByModel)
     }
 }
