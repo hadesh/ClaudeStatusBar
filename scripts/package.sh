@@ -13,20 +13,30 @@ DISPLAY_NAME="Claude Status Bar"
 DIST="$ROOT/dist"
 APP="$DIST/$APP_NAME.app"
 
-echo "==> Building universal release binary (arm64 + x86_64)"
+echo "==> Cleaning previous release build (avoids stale .o files for deleted sources)"
+swift package clean
+
+echo "==> Building universal release binaries (arm64 + x86_64)"
+# Note: do NOT pass --product flags here. After `swift package clean`, scoping
+# the build to specific products silently skipped the main `ClaudeStatusBar`
+# target on this Swift version (5.9, Xcode 26). Building all products works.
 swift build -c release --arch arm64 --arch x86_64
 
 BIN="$ROOT/.build/apple/Products/Release/$APP_NAME"
-if [[ ! -x "$BIN" ]]; then
-  echo "Binary not found at $BIN" >&2
-  exit 1
-fi
+HOOK_BIN="$ROOT/.build/apple/Products/Release/${APP_NAME}Hook"
+for f in "$BIN" "$HOOK_BIN"; do
+  if [[ ! -x "$f" ]]; then
+    echo "Binary not found at $f" >&2
+    exit 1
+  fi
+done
 
 echo "==> Assembling $APP"
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS"
 mkdir -p "$APP/Contents/Resources"
 cp "$BIN" "$APP/Contents/MacOS/$APP_NAME"
+cp "$HOOK_BIN" "$APP/Contents/MacOS/${APP_NAME}Hook"
 cp "$ROOT/assets/AppIcon.icns" "$APP/Contents/Resources/AppIcon.icns"
 
 cat > "$APP/Contents/Info.plist" <<PLIST

@@ -1,35 +1,39 @@
 import Foundation
 import UserNotifications
 
-public final class WaitingNotifier: NSObject, UNUserNotificationCenterDelegate {
-    public typealias ClickHandler = (_ pid: Int, _ cwd: String?) -> Void
-
+/// Posts the "session entered waiting" banner. Stateless aside from a feature
+/// flag. The `UNUserNotificationCenter` delegate seat is owned by
+/// `NotificationDispatcher`; click routing to the terminal lives there.
+public final class WaitingNotifier {
     private let useUN: Bool
-    private var clickHandler: ClickHandler?
 
-    public override init() {
+    public init() {
         // UNUserNotificationCenter 仅在有 bundle identifier(打包成 .app)时可用。
         useUN = Bundle.main.bundleIdentifier != nil
-        super.init()
-        if useUN {
-            let center = UNUserNotificationCenter.current()
-            center.delegate = self
-            center.requestAuthorization(options: [.alert, .sound]) { _, _ in }
-        }
     }
 
-    /// 用户点击通知时回调。AppDelegate 在 didFinishLaunching 里挂 hook,
-    /// 把点击路由到激活终端 / 打开 cwd 的逻辑。osascript 兜底路径无法回调。
-    public func setClickHandler(_ handler: @escaping ClickHandler) {
-        clickHandler = handler
-    }
-
+    /// Banner posted when a CLI session enters `waiting` for a non-permission
+    /// reason (the permission case is owned by the panel). Used by
+    /// `WaitingTransitionDetector` and `WaitingReminderTracker`.
     public func notify(session: Session) {
         let project = (session.cwd as NSString).lastPathComponent
         let reason = session.waitingFor ?? "需要确认"
         notify(
             title: "Claude Code 等待响应",
             body: "\(project) · \(reason)",
+            userInfo: ["pid": session.pid, "cwd": session.cwd]
+        )
+    }
+
+    /// Banner posted when a CLI session transitions `busy → idle` —
+    /// "Claude Code finished its turn". Click routes back to the terminal via
+    /// `NotificationDispatcher.onWaitingClick` (same userInfo shape).
+    public func notifyCompletion(session: Session) {
+        let project = (session.cwd as NSString).lastPathComponent
+        let body = project.isEmpty ? "(unknown project)" : project
+        notify(
+            title: "Claude Code 任务完成",
+            body: body,
             userInfo: ["pid": session.pid, "cwd": session.cwd]
         )
     }
@@ -49,31 +53,6 @@ public final class WaitingNotifier: NSObject, UNUserNotificationCenterDelegate {
         } else {
             presentViaOsascript(title: title, body: body)
         }
-    }
-
-    /// 状态栏 app 在用户点开菜单时会被视为前台,默认行为会吞掉横幅;返回
-    /// `[.banner, .sound]` 强制弹出。
-    public func userNotificationCenter(
-        _ center: UNUserNotificationCenter,
-        willPresent notification: UNNotification,
-        withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void
-    ) {
-        completionHandler([.banner, .sound])
-    }
-
-    public func userNotificationCenter(
-        _ center: UNUserNotificationCenter,
-        didReceive response: UNNotificationResponse,
-        withCompletionHandler completionHandler: @escaping () -> Void
-    ) {
-        let info = response.notification.request.content.userInfo
-        if let pid = info["pid"] as? Int {
-            let cwd = info["cwd"] as? String
-            DispatchQueue.main.async { [weak self] in
-                self?.clickHandler?(pid, cwd)
-            }
-        }
-        completionHandler()
     }
 
     private func presentViaOsascript(title: String, body: String) {

@@ -1,0 +1,97 @@
+import Foundation
+import Combine
+
+/// Holds in-flight permission prompts. Each entry carries a reply closure that
+/// resolves the originating socket connection. Auto-denies after `timeout`.
+public final class PermissionPromptStore {
+    public typealias Reply = (PermissionPromptDecision) -> Void
+    /// (interval, work) -> cancel. Lets tests inject deterministic timing.
+    public typealias Scheduler = (TimeInterval, @escaping () -> Void) -> () -> Void
+
+    private struct Pending {
+        let request: PermissionPromptRequest
+        let reply: Reply
+        let cancelTimeout: () -> Void
+    }
+
+    public let incoming = PassthroughSubject<PermissionPromptRequest, Never>()
+
+    /// Fires whenever an entry leaves the pending set — explicit resolve, allow/deny
+    /// shorthand, or auto-deny on timeout. Lets the panel UI dismiss stale windows
+    /// when the request was resolved by something other than the panel itself.
+    public let resolved = PassthroughSubject<String, Never>()
+
+    private let timeout: TimeInterval
+    private let scheduler: Scheduler
+    private let lock = NSLock()
+    private var entries: [String: Pending] = [:]
+
+    public init(
+        timeout: TimeInterval = 300,
+        scheduler: @escaping Scheduler = PermissionPromptStore.defaultScheduler
+    ) {
+        self.timeout = timeout
+        self.scheduler = scheduler
+    }
+
+    public var pendingIds: [String] {
+        lock.lock(); defer { lock.unlock() }
+        return Array(entries.keys).sorted()
+    }
+
+    public func add(_ request: PermissionPromptRequest, reply: @escaping Reply) {
+        let cancel = scheduler(timeout) { [weak self] in
+            self?.fireTimeout(id: request.id)
+        }
+        lock.lock()
+        entries[request.id] = Pending(request: request, reply: reply, cancelTimeout: cancel)
+        lock.unlock()
+        incoming.send(request)
+    }
+
+    public func resolve(id: String, decision: PermissionPromptDecision) {
+        lock.lock()
+        let entry = entries.removeValue(forKey: id)
+        lock.unlock()
+        guard let entry else { return }
+        entry.cancelTimeout()
+        entry.reply(decision)
+        resolved.send(id)
+    }
+
+    /// Convenience: allow with the original input echoed back as `updatedInput`.
+    public func resolveAllow(id: String) {
+        lock.lock()
+        let entry = entries.removeValue(forKey: id)
+        lock.unlock()
+        guard let entry else { return }
+        entry.cancelTimeout()
+        entry.reply(.allow(id: id, input: entry.request.input))
+        resolved.send(id)
+    }
+
+    public func resolveDeny(id: String, message: String) {
+        resolve(id: id, decision: .deny(id: id, message: message))
+    }
+
+    private func fireTimeout(id: String) {
+        lock.lock()
+        let entry = entries.removeValue(forKey: id)
+        lock.unlock()
+        guard let entry else { return }
+        let minutes = Int(timeout / 60)
+        let message = minutes > 0
+            ? "user did not respond within \(minutes) minutes"
+            : "user did not respond within \(Int(timeout)) seconds"
+        entry.reply(.deny(id: id, message: message))
+        resolved.send(id)
+    }
+
+    public static let defaultScheduler: Scheduler = { interval, work in
+        let t = DispatchSource.makeTimerSource(queue: .global(qos: .userInitiated))
+        t.schedule(deadline: .now() + interval)
+        t.setEventHandler(handler: work)
+        t.resume()
+        return { t.cancel() }
+    }
+}

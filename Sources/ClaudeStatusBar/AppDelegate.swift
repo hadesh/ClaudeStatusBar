@@ -7,7 +7,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let usageTracker = UsageTracker()
     private lazy var watcher = SessionWatcher(store: store)
     private let notifier = WaitingNotifier()
+    private let dispatcher = NotificationDispatcher()
+    private let permissionStore = PermissionPromptStore()
+    private lazy var permissionPanels = PermissionPromptPanelManager(store: permissionStore)
+    private lazy var permissionListener = PermissionPromptListener(
+        store: permissionStore,
+        socketPath: AppDelegate.permissionSocketPath()
+    )
     private var detector = WaitingTransitionDetector()
+    private var completionDetector = TaskCompletionDetector()
     private let settings: SettingsStore
     private let loginItem = LoginItemController()
     private var reminderTracker: WaitingReminderTracker
@@ -38,8 +46,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
 
-        notifier.setClickHandler { [weak self] pid, cwd in
+        dispatcher.onWaitingClick = { [weak self] pid, cwd in
             self?.handleNotificationClick(pid: pid, cwd: cwd)
+        }
+        dispatcher.install()
+
+        // Touch panelManager so its store subscriptions are wired before the
+        // listener starts accepting requests.
+        _ = permissionPanels
+
+        do {
+            try permissionListener.start()
+        } catch {
+            NSLog("PermissionPromptListener failed to start: \(error)")
         }
 
         store.$sessions
@@ -47,8 +66,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             .sink { [weak self] sessions in
                 guard let self else { return }
                 let transitioned = self.detector.detect(in: sessions)
+                let completed = self.completionDetector.detect(in: sessions)
                 guard self.settings.notificationsEnabled else { return }
                 for s in transitioned { self.notifier.notify(session: s) }
+                for s in completed { self.notifier.notifyCompletion(session: s) }
             }
             .store(in: &cancellables)
 
@@ -93,8 +114,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationWillTerminate(_ notification: Notification) {
         watcher.stop()
         usageTracker.stop()
+        permissionListener.stop()
         reminderTimer?.cancel()
         reminderTimer = nil
+    }
+
+    /// `~/Library/Application Support/ClaudeStatusBar/prompt.sock`. Created at
+    /// 0700 on first call. Helper subprocesses dial this path.
+    static func permissionSocketPath() -> String {
+        let supportDir = FileManager.default
+            .urls(for: .applicationSupportDirectory, in: .userDomainMask)
+            .first?
+            .appendingPathComponent("ClaudeStatusBar", isDirectory: true)
+            ?? URL(fileURLWithPath: NSTemporaryDirectory())
+        try? FileManager.default.createDirectory(
+            at: supportDir,
+            withIntermediateDirectories: true,
+            attributes: [.posixPermissions: 0o700]
+        )
+        return supportDir.appendingPathComponent("prompt.sock").path
     }
 
     private func refreshIcon() {
@@ -308,5 +346,4 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             NSSound.beep()
         }
     }
-
 }

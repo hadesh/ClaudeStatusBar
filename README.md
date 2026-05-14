@@ -7,6 +7,7 @@
 - **会话总览**：当前所有 CLI 会话（pid、cwd、状态），按项目目录展示。
 - **状态指示**：菜单栏图标在 _idle / working / waiting_ 三种状态下变色（黑/橙/黄）。
 - **等待提醒**：任意会话进入 `waiting`（CLI 弹了确认对话框）时立刻发送系统通知，省得切回 Terminal 才发现。
+- **状态栏授权**：右上角弹一个浮动小面板，带 **允许 / 拒绝** 按钮（Return / Esc 也可），单击直接回应 CLI 的权限请求，不用切回 Terminal。注册一次 `PermissionRequest` hook 即可，对 vanilla `claude` 直接生效；详见 [docs/permission-prompt.md](docs/permission-prompt.md)。
 - **上下文用量**：每条会话显示当前模型 + 上下文窗口占用百分比（读 `~/.claude/projects/.../*.jsonl` 最近一条 assistant 消息）。
 - **累计用量**：菜单底部按模型聚合 token 总量与占比（实时扫描 `~/.claude/projects/`，不依赖 stats 缓存）。
 
@@ -54,7 +55,7 @@ swift test --filter ClaudeStatusBarTests.SessionTests   # 单个 suite
 
 ## 卸载
 
-退出菜单栏图标（点击 → Quit），把 `/Applications/ClaudeStatusBar.app` 扔进废纸篓即可。本 App 不写任何文件，只读 `~/.claude/` 下 Claude Code CLI 自己的数据。
+退出菜单栏图标（点击 → Quit），把 `/Applications/ClaudeStatusBar.app` 扔进废纸篓即可。开启了状态栏授权功能的话，再删一下 `~/Library/Application Support/ClaudeStatusBar/`（里面只有一个 socket 文件），并把 `~/.claude/settings.json` 里 `hooks.PermissionRequest` 那一段对应条目移除。
 
 ## License
 

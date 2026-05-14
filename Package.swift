@@ -6,6 +6,15 @@ let package = Package(
     platforms: [.macOS(.v13)],
     targets: [
         .executableTarget(name: "ClaudeStatusBar"),
+        .target(name: "ClaudeStatusBarHookCore"),
+        .executableTarget(
+            name: "ClaudeStatusBarHook",
+            dependencies: ["ClaudeStatusBarHookCore"]
+        ),
         .testTarget(name: "ClaudeStatusBarTests", dependencies: ["ClaudeStatusBar"]),
+        .testTarget(
+            name: "ClaudeStatusBarHookTests",
+            dependencies: ["ClaudeStatusBarHookCore"]
+        ),
     ]
 )
