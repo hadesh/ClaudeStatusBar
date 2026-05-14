@@ -26,12 +26,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
             .store(in: &cancellables)
 
-        Publishers.CombineLatest(store.$sessions, usageTracker.$lifetimeByModel)
+        Publishers.CombineLatest3(store.$sessions, usageTracker.$lifetimeByModel, usageTracker.$currentWindow)
             .receive(on: DispatchQueue.main)
-            .sink { [weak self] sessions, lifetime in
+            .sink { [weak self] sessions, lifetime, window in
                 guard let self else { return }
                 self.refreshIcon()
-                self.rebuildMenu(with: sessions, lifetime: lifetime)
+                self.rebuildMenu(with: sessions, lifetime: lifetime, window: window)
             }
             .store(in: &cancellables)
 
@@ -61,7 +61,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         statusItem?.button?.image = StatusIcon.image(for: store.aggregateStatus)
     }
 
-    private func rebuildMenu(with sessions: [Session], lifetime: [ModelLifetimeUsage]) {
+    private func rebuildMenu(with sessions: [Session], lifetime: [ModelLifetimeUsage], window: RollingWindow?) {
         let menu = NSMenu()
 
         let header = NSMenuItem(
@@ -85,6 +85,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
         }
 
+        menu.addItem(.separator())
+        appendCurrentWindowItems(to: menu, window: window)
         menu.addItem(.separator())
         appendLifetimeItems(to: menu, lifetime: lifetime)
         if LoginItemController.isAvailable {
@@ -139,6 +141,44 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             cost.indentationLevel = 1
             menu.addItem(cost)
         }
+    }
+
+    private func appendCurrentWindowItems(to menu: NSMenu, window: RollingWindow?) {
+        let header = NSMenuItem(title: "本 5 小时", action: nil, keyEquivalent: "")
+        header.isEnabled = false
+        menu.addItem(header)
+
+        guard let window else {
+            let empty = NSMenuItem(title: "  (无活动)", action: nil, keyEquivalent: "")
+            empty.isEnabled = false
+            menu.addItem(empty)
+            return
+        }
+
+        let usage = NSMenuItem(
+            title: "用量 \(formatTokens(window.totalTokens))  In \(formatTokens(window.inputTokens)) · Out \(formatTokens(window.outputTokens))",
+            action: nil, keyEquivalent: ""
+        )
+        usage.isEnabled = false
+        usage.indentationLevel = 1
+        menu.addItem(usage)
+
+        let remaining = window.remaining(now: Date())
+        let reset = NSMenuItem(
+            title: "重置 \(formatRemaining(remaining)) 后",
+            action: nil, keyEquivalent: ""
+        )
+        reset.isEnabled = false
+        reset.indentationLevel = 1
+        menu.addItem(reset)
+    }
+
+    private func formatRemaining(_ seconds: TimeInterval) -> String {
+        let total = Int(seconds.rounded())
+        let h = total / 3600
+        let m = (total % 3600) / 60
+        if h > 0 { return "\(h)h \(m)m" }
+        return "\(m)m"
     }
 
     private func formatTokens(_ n: Int) -> String {
@@ -228,6 +268,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         } catch {
             NSLog("Toggle login item failed: \(error)")
         }
-        rebuildMenu(with: store.sessions, lifetime: usageTracker.lifetimeByModel)
+        rebuildMenu(with: store.sessions, lifetime: usageTracker.lifetimeByModel, window: usageTracker.currentWindow)
     }
 }
