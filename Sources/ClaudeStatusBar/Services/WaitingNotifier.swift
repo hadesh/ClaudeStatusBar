@@ -12,6 +12,19 @@ public final class WaitingNotifier {
         useUN = Bundle.main.bundleIdentifier != nil
     }
 
+    /// Banner posted when a CLI session enters `waiting` for a non-permission
+    /// reason (the permission case is owned by the panel). Used by
+    /// `WaitingTransitionDetector` and `WaitingReminderTracker`.
+    public func notify(session: Session) {
+        let project = (session.cwd as NSString).lastPathComponent
+        let reason = session.waitingFor ?? "需要确认"
+        notify(
+            title: "Claude Code 等待响应",
+            body: "\(project) · \(reason)",
+            userInfo: ["pid": session.pid, "cwd": session.cwd]
+        )
+    }
+
     /// Banner posted when a CLI session transitions `busy → idle` —
     /// "Claude Code finished its turn". Click routes back to the terminal via
     /// `NotificationDispatcher.onWaitingClick` (same userInfo shape).
