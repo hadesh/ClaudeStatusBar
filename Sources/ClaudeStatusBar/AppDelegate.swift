@@ -158,10 +158,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let suffix = s.status == .waiting ? " — \(s.waitingFor ?? "")" : ""
         let title = "\(badge) \(name) · pid \(s.pid)\(suffix)"
 
-        let item = NSMenuItem(title: title, action: #selector(openCwd(_:)), keyEquivalent: "")
+        let item = NSMenuItem(title: title, action: #selector(revealSession(_:)), keyEquivalent: "")
         item.target = self
-        item.representedObject = s.cwd
-        item.toolTip = s.cwd
+        item.representedObject = s
+        item.toolTip = "\(s.cwd)\n按住 Option 点击在 Finder 中打开"
         return item
     }
 
@@ -177,9 +177,49 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return item
     }
 
-    @objc private func openCwd(_ sender: NSMenuItem) {
-        guard let path = sender.representedObject as? String else { return }
-        NSWorkspace.shared.open(URL(fileURLWithPath: path))
+    @objc private func revealSession(_ sender: NSMenuItem) {
+        guard let session = sender.representedObject as? Session else { return }
+        let optionHeld = NSApp.currentEvent?.modifierFlags.contains(.option) ?? false
+        if optionHeld {
+            openCwdInFinder(session.cwd)
+            return
+        }
+        guard let app = findOwningApp(of: session.pid) else {
+            notifyTerminalNotFound()
+            return
+        }
+        app.activate(options: [.activateAllWindows])
+    }
+
+    private func findOwningApp(of sessionPid: Int) -> NSRunningApplication? {
+        let resolved = TerminalNavigator.findGuiAncestor(
+            startingFrom: sessionPid,
+            processInfo: ProcessTree.info(pid:),
+            isGuiApp: { NSRunningApplication(processIdentifier: pid_t($0)) != nil }
+        )
+        return resolved.flatMap { NSRunningApplication(processIdentifier: pid_t($0)) }
+    }
+
+    private func openCwdInFinder(_ cwd: String) {
+        NSWorkspace.shared.open(URL(fileURLWithPath: cwd))
+    }
+
+    private func notifyTerminalNotFound() {
+        NSSound.beep()
+        showSystemNotification(
+            title: "找不到对应终端",
+            body: "按住 Option 点击可在 Finder 中打开 cwd"
+        )
+    }
+
+    private func showSystemNotification(title: String, body: String) {
+        let escapedTitle = title.replacingOccurrences(of: "\"", with: "\\\"")
+        let escapedBody = body.replacingOccurrences(of: "\"", with: "\\\"")
+        let script = "display notification \"\(escapedBody)\" with title \"\(escapedTitle)\""
+        let task = Process()
+        task.launchPath = "/usr/bin/osascript"
+        task.arguments = ["-e", script]
+        try? task.run()
     }
 
     @objc private func toggleLoginItem(_ sender: NSMenuItem) {
