@@ -16,6 +16,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
 
+        notifier.setClickHandler { [weak self] pid, cwd in
+            self?.handleNotificationClick(pid: pid, cwd: cwd)
+        }
+
         store.$sessions
             .receive(on: DispatchQueue.main)
             .sink { [weak self] sessions in
@@ -246,20 +250,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func notifyTerminalNotFound() {
         NSSound.beep()
-        showSystemNotification(
+        notifier.notify(
             title: "找不到对应终端",
             body: "按住 Option 点击可在 Finder 中打开 cwd"
         )
     }
 
-    private func showSystemNotification(title: String, body: String) {
-        let escapedTitle = title.replacingOccurrences(of: "\"", with: "\\\"")
-        let escapedBody = body.replacingOccurrences(of: "\"", with: "\\\"")
-        let script = "display notification \"\(escapedBody)\" with title \"\(escapedTitle)\""
-        let task = Process()
-        task.launchPath = "/usr/bin/osascript"
-        task.arguments = ["-e", script]
-        try? task.run()
+    private func handleNotificationClick(pid: Int, cwd: String?) {
+        if let app = findOwningApp(of: pid) {
+            app.activate(options: [.activateAllWindows])
+            return
+        }
+        if let cwd {
+            openCwdInFinder(cwd)
+        } else {
+            NSSound.beep()
+        }
     }
 
     @objc private func toggleLoginItem(_ sender: NSMenuItem) {
