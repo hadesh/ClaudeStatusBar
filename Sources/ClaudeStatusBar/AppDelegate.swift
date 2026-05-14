@@ -8,10 +8,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private lazy var watcher = SessionWatcher(store: store)
     private let notifier = WaitingNotifier()
     private var detector = WaitingTransitionDetector()
-    private var reminderTracker = WaitingReminderTracker()
-    private var reminderTimer: DispatchSourceTimer?
+    private let settings: SettingsStore
     private let loginItem = LoginItemController()
+    private var reminderTracker: WaitingReminderTracker
+    private var reminderTimer: DispatchSourceTimer?
+    private var lastReminderInterval: TimeInterval?
     private var cancellables = Set<AnyCancellable>()
+    private lazy var settingsWindowController = SettingsWindowController(
+        settings: settings, loginItem: loginItem
+    )
+
+    override init() {
+        let s = SettingsStore()
+        self.settings = s
+        self.reminderTracker = Self.makeReminderTracker(interval: s.reminderInterval)
+        self.lastReminderInterval = s.reminderInterval
+        super.init()
+    }
+
+    private static func makeReminderTracker(interval: TimeInterval?) -> WaitingReminderTracker {
+        guard let interval else {
+            return WaitingReminderTracker(config: .init(initialDelay: 30, interval: 30, maxReminders: 0))
+        }
+        return WaitingReminderTracker(
+            config: .init(initialDelay: interval, interval: interval, maxReminders: 3)
+        )
+    }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
@@ -24,8 +46,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             .receive(on: DispatchQueue.main)
             .sink { [weak self] sessions in
                 guard let self else { return }
-                for s in self.detector.detect(in: sessions) {
-                    self.notifier.notify(session: s)
+                let transitioned = self.detector.detect(in: sessions)
+                guard self.settings.notificationsEnabled else { return }
+                for s in transitioned { self.notifier.notify(session: s) }
+            }
+            .store(in: &cancellables)
+
+        settings.objectWillChange
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                guard let self else { return }
+                // 颜色变化:刷新菜单栏图标。
+                self.refreshIcon()
+                // 间隔变化:重建 reminder tracker(状态清零是预期行为)。
+                if self.settings.reminderInterval != self.lastReminderInterval {
+                    self.reminderTracker = Self.makeReminderTracker(interval: self.settings.reminderInterval)
+                    self.lastReminderInterval = self.settings.reminderInterval
                 }
             }
             .store(in: &cancellables)
@@ -46,9 +82,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         t.schedule(deadline: .now() + 5.0, repeating: 5.0)
         t.setEventHandler { [weak self] in
             guard let self else { return }
-            for s in self.reminderTracker.tick(sessions: self.store.sessions, now: Date()) {
-                self.notifier.notify(session: s)
-            }
+            let due = self.reminderTracker.tick(sessions: self.store.sessions, now: Date())
+            guard self.settings.notificationsEnabled else { return }
+            for s in due { self.notifier.notify(session: s) }
         }
         t.resume()
         reminderTimer = t
@@ -62,7 +98,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func refreshIcon() {
-        statusItem?.button?.image = StatusIcon.image(for: store.aggregateStatus)
+        statusItem?.button?.image = StatusIcon.image(
+            for: store.aggregateStatus,
+            working: settings.workingColor,
+            attention: settings.attentionColor
+        )
     }
 
     private func rebuildMenu(with sessions: [Session], lifetime: [ModelLifetimeUsage], window: RollingWindow?) {
@@ -93,23 +133,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         appendCurrentWindowItems(to: menu, window: window)
         menu.addItem(.separator())
         appendLifetimeItems(to: menu, lifetime: lifetime)
-        if LoginItemController.isAvailable {
-            let item = NSMenuItem(
-                title: "开机自启",
-                action: #selector(toggleLoginItem(_:)),
-                keyEquivalent: ""
-            )
-            item.target = self
-            item.state = loginItem.isEnabled ? .on : .off
-            menu.addItem(item)
-        }
         menu.addItem(.separator())
+        let prefsItem = NSMenuItem(
+            title: "偏好设置...",
+            action: #selector(openSettings(_:)),
+            keyEquivalent: ","
+        )
+        prefsItem.target = self
+        menu.addItem(prefsItem)
         menu.addItem(
             withTitle: "Quit",
             action: #selector(NSApplication.terminate(_:)),
             keyEquivalent: "q"
         )
         statusItem?.menu = menu
+    }
+
+    @objc private func openSettings(_ sender: NSMenuItem) {
+        settingsWindowController.showWindow(sender)
     }
 
     private func appendLifetimeItems(to menu: NSMenu, lifetime: [ModelLifetimeUsage]) {
@@ -268,12 +309,4 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    @objc private func toggleLoginItem(_ sender: NSMenuItem) {
-        do {
-            try loginItem.setEnabled(!loginItem.isEnabled)
-        } catch {
-            NSLog("Toggle login item failed: \(error)")
-        }
-        rebuildMenu(with: store.sessions, lifetime: usageTracker.lifetimeByModel, window: usageTracker.currentWindow)
-    }
 }
