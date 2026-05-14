@@ -11,13 +11,21 @@ final class WaitingTransitionDetectorTests: XCTestCase {
         return try! JSONDecoder().decode(Session.self, from: json)
     }
 
-    func testFirstCallReturnsAllCurrentlyWaiting() {
+    func testFirstCallSilentlyAbsorbsBaseline() {
         var detector = WaitingTransitionDetector()
         let newly = detector.detect(in: [
             session(pid: 1, status: .busy),
             session(pid: 2, status: .waiting, waitingFor: "perm")
         ])
-        XCTAssertEqual(newly.map(\.pid), [2])
+        XCTAssertEqual(newly.map(\.pid), [], "首帧吸收为基线,避免启动时把已存在的 waiting 当作新事件全部弹出")
+    }
+
+    func testWaitingPresentInBaselineNeverNotifies() {
+        var detector = WaitingTransitionDetector()
+        let s = [session(pid: 2, status: .waiting)]
+        _ = detector.detect(in: s)
+        XCTAssertTrue(detector.detect(in: s).isEmpty)
+        XCTAssertTrue(detector.detect(in: s).isEmpty)
     }
 
     func testRepeatedCallWithSameSetReturnsEmpty() {
@@ -27,14 +35,14 @@ final class WaitingTransitionDetectorTests: XCTestCase {
         XCTAssertTrue(detector.detect(in: s).isEmpty)
     }
 
-    func testWaitingThenIdleThenWaitingNotifiesTwice() {
+    func testWaitingThenIdleThenWaitingNotifiesOnReentry() {
         var detector = WaitingTransitionDetector()
         let waiting = [session(pid: 2, status: .waiting)]
         let idle = [session(pid: 2, status: .idle)]
 
-        XCTAssertEqual(detector.detect(in: waiting).map(\.pid), [2])
+        XCTAssertEqual(detector.detect(in: waiting).map(\.pid), [], "首帧吸收基线")
         XCTAssertTrue(detector.detect(in: idle).isEmpty)
-        XCTAssertEqual(detector.detect(in: waiting).map(\.pid), [2])
+        XCTAssertEqual(detector.detect(in: waiting).map(\.pid), [2], "离开 waiting 后再进入应通知")
     }
 
     func testNewSessionEnteringWaitingNotifies() {
