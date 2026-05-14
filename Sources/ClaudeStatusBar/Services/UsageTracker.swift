@@ -8,6 +8,7 @@ public final class UsageTracker {
     private var timer: DispatchSourceTimer?
 
     @Published public private(set) var lifetimeByModel: [ModelLifetimeUsage] = []
+    @Published public private(set) var currentWindow: RollingWindow? = nil
 
     public init(
         projectsRoot: URL = LiveUsageAggregator.defaultProjectsRoot,
@@ -39,9 +40,11 @@ public final class UsageTracker {
         let projectsRoot = self.projectsRoot
         let publishQueue = self.publishQueue
         workQueue.async { [weak self] in
-            let result = LiveUsageAggregator.aggregate(from: projectsRoot)
+            let lifetime = LiveUsageAggregator.aggregate(from: projectsRoot)
+            let window = RollingWindowAggregator.currentWindow(now: Date(), projectsRoot: projectsRoot)
             publishQueue.async { [weak self] in
-                self?.lifetimeByModel = result
+                self?.lifetimeByModel = lifetime
+                self?.currentWindow = window
             }
         }
     }

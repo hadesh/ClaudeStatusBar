@@ -26,12 +26,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
             .store(in: &cancellables)
 
-        Publishers.CombineLatest(store.$sessions, usageTracker.$lifetimeByModel)
+        Publishers.CombineLatest3(store.$sessions, usageTracker.$lifetimeByModel, usageTracker.$currentWindow)
             .receive(on: DispatchQueue.main)
-            .sink { [weak self] sessions, lifetime in
+            .sink { [weak self] sessions, lifetime, window in
                 guard let self else { return }
                 self.refreshIcon()
-                self.rebuildMenu(with: sessions, lifetime: lifetime)
+                self.rebuildMenu(with: sessions, lifetime: lifetime, window: window)
             }
             .store(in: &cancellables)
 
@@ -61,7 +61,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         statusItem?.button?.image = StatusIcon.image(for: store.aggregateStatus)
     }
 
-    private func rebuildMenu(with sessions: [Session], lifetime: [ModelLifetimeUsage]) {
+    private func rebuildMenu(with sessions: [Session], lifetime: [ModelLifetimeUsage], window: RollingWindow?) {
         let menu = NSMenu()
 
         let header = NSMenuItem(
@@ -85,6 +85,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
         }
 
+        menu.addItem(.separator())
+        appendCurrentWindowItems(to: menu, window: window)
         menu.addItem(.separator())
         appendLifetimeItems(to: menu, lifetime: lifetime)
         if LoginItemController.isAvailable {
@@ -141,6 +143,44 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    private func appendCurrentWindowItems(to menu: NSMenu, window: RollingWindow?) {
+        let header = NSMenuItem(title: "本 5 小时", action: nil, keyEquivalent: "")
+        header.isEnabled = false
+        menu.addItem(header)
+
+        guard let window else {
+            let empty = NSMenuItem(title: "  (无活动)", action: nil, keyEquivalent: "")
+            empty.isEnabled = false
+            menu.addItem(empty)
+            return
+        }
+
+        let usage = NSMenuItem(
+            title: "用量 \(formatTokens(window.totalTokens))  In \(formatTokens(window.inputTokens)) · Out \(formatTokens(window.outputTokens))",
+            action: nil, keyEquivalent: ""
+        )
+        usage.isEnabled = false
+        usage.indentationLevel = 1
+        menu.addItem(usage)
+
+        let remaining = window.remaining(now: Date())
+        let reset = NSMenuItem(
+            title: "重置 \(formatRemaining(remaining)) 后",
+            action: nil, keyEquivalent: ""
+        )
+        reset.isEnabled = false
+        reset.indentationLevel = 1
+        menu.addItem(reset)
+    }
+
+    private func formatRemaining(_ seconds: TimeInterval) -> String {
+        let total = Int(seconds.rounded())
+        let h = total / 3600
+        let m = (total % 3600) / 60
+        if h > 0 { return "\(h)h \(m)m" }
+        return "\(m)m"
+    }
+
     private func formatTokens(_ n: Int) -> String {
         if n >= 1_000_000 { return String(format: "%.1fM", Double(n) / 1_000_000) }
         if n >= 1_000 { return String(format: "%.1fk", Double(n) / 1_000) }
@@ -158,10 +198,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let suffix = s.status == .waiting ? " — \(s.waitingFor ?? "")" : ""
         let title = "\(badge) \(name) · pid \(s.pid)\(suffix)"
 
-        let item = NSMenuItem(title: title, action: #selector(openCwd(_:)), keyEquivalent: "")
+        let item = NSMenuItem(title: title, action: #selector(revealSession(_:)), keyEquivalent: "")
         item.target = self
-        item.representedObject = s.cwd
-        item.toolTip = s.cwd
+        item.representedObject = s
+        item.toolTip = "\(s.cwd)\n按住 Option 点击在 Finder 中打开"
         return item
     }
 
@@ -177,9 +217,49 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return item
     }
 
-    @objc private func openCwd(_ sender: NSMenuItem) {
-        guard let path = sender.representedObject as? String else { return }
-        NSWorkspace.shared.open(URL(fileURLWithPath: path))
+    @objc private func revealSession(_ sender: NSMenuItem) {
+        guard let session = sender.representedObject as? Session else { return }
+        let optionHeld = NSApp.currentEvent?.modifierFlags.contains(.option) ?? false
+        if optionHeld {
+            openCwdInFinder(session.cwd)
+            return
+        }
+        guard let app = findOwningApp(of: session.pid) else {
+            notifyTerminalNotFound()
+            return
+        }
+        app.activate(options: [.activateAllWindows])
+    }
+
+    private func findOwningApp(of sessionPid: Int) -> NSRunningApplication? {
+        let resolved = TerminalNavigator.findGuiAncestor(
+            startingFrom: sessionPid,
+            processInfo: ProcessTree.info(pid:),
+            isGuiApp: { NSRunningApplication(processIdentifier: pid_t($0)) != nil }
+        )
+        return resolved.flatMap { NSRunningApplication(processIdentifier: pid_t($0)) }
+    }
+
+    private func openCwdInFinder(_ cwd: String) {
+        NSWorkspace.shared.open(URL(fileURLWithPath: cwd))
+    }
+
+    private func notifyTerminalNotFound() {
+        NSSound.beep()
+        showSystemNotification(
+            title: "找不到对应终端",
+            body: "按住 Option 点击可在 Finder 中打开 cwd"
+        )
+    }
+
+    private func showSystemNotification(title: String, body: String) {
+        let escapedTitle = title.replacingOccurrences(of: "\"", with: "\\\"")
+        let escapedBody = body.replacingOccurrences(of: "\"", with: "\\\"")
+        let script = "display notification \"\(escapedBody)\" with title \"\(escapedTitle)\""
+        let task = Process()
+        task.launchPath = "/usr/bin/osascript"
+        task.arguments = ["-e", script]
+        try? task.run()
     }
 
     @objc private func toggleLoginItem(_ sender: NSMenuItem) {
@@ -188,6 +268,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         } catch {
             NSLog("Toggle login item failed: \(error)")
         }
-        rebuildMenu(with: store.sessions, lifetime: usageTracker.lifetimeByModel)
+        rebuildMenu(with: store.sessions, lifetime: usageTracker.lifetimeByModel, window: usageTracker.currentWindow)
     }
 }
