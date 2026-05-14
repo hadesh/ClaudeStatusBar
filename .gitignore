@@ -67,3 +67,4 @@ fastlane/test_output
 DerivedData/
 .DS_Store
 dist/
+.claude/worktrees/
