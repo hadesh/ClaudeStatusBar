@@ -79,6 +79,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             }
             .store(in: &cancellables)
 
+        // 浮窗状态变化(新请求 / 用户答复 / 终端 race) 都影响 attentionCount,
+        // 跟着刷新一下图标角标。
+        Publishers.Merge(
+            permissionStore.incoming.map { _ in () },
+            permissionStore.resolved.map { _ in () }
+        )
+        .receive(on: DispatchQueue.main)
+        .sink { [weak self] in self?.refreshIcon() }
+        .store(in: &cancellables)
+
         store.$sessions
             .receive(on: DispatchQueue.main)
             .sink { [weak self] sessions in
@@ -185,8 +195,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         statusItem?.button?.image = StatusIcon.image(
             for: store.aggregateStatus,
             working: settings.workingColor,
-            attention: settings.attentionColor
+            attention: settings.attentionColor,
+            badgeCount: attentionCount()
         )
+    }
+
+    /// 「需要你」事件的 sessionId 集合并 —— waiting 状态的会话和 permission 浮窗
+    /// 经常对应同一个 session,简单加法会双计。permission entry 上的 sessionId
+    /// 理论可空但实际 CLI 总是带,本期不做空补偿(少计 1 比双计明显)。
+    private func attentionCount() -> Int {
+        let waitingIds = Set(
+            store.sessions.filter { $0.status == .waiting }.map { $0.sessionId }
+        )
+        return waitingIds.union(permissionStore.pendingSessionIds()).count
     }
 
     private func rebuildMenu(with sessions: [Session], lifetime: [ModelLifetimeUsage], window: RollingWindow?) {
