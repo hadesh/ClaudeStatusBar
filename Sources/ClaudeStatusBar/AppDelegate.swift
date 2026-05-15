@@ -11,6 +11,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var menuIsShowing = false
     private let store = SessionStore()
     private let usageTracker = UsageTracker()
+    private let contextStore = SessionContextStore()
     private lazy var watcher = SessionWatcher(store: store)
     private let notifier = WaitingNotifier()
     private let dispatcher = NotificationDispatcher()
@@ -93,6 +94,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             .receive(on: DispatchQueue.main)
             .sink { [weak self] sessions in
                 guard let self else { return }
+                self.contextStore.updateSessions(sessions)
                 let transitioned = self.detector.detect(in: sessions)
                 let completed = self.completionDetector.detect(in: sessions)
                 guard self.settings.notificationsEnabled else { return }
@@ -130,6 +132,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         watcher.start()
         usageTracker.start()
+        contextStore.start()
 
         let t = DispatchSource.makeTimerSource(queue: .main)
         t.schedule(deadline: .now() + 5.0, repeating: 5.0)
@@ -156,6 +159,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     func applicationWillTerminate(_ notification: Notification) {
         watcher.stop()
         usageTracker.stop()
+        contextStore.stop()
         permissionListener.stop()
         reminderTimer?.cancel()
         reminderTimer = nil
@@ -347,14 +351,58 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         case .waiting: badge = "⚠"
         }
         let name = (s.cwd as NSString).lastPathComponent
-        let suffix = s.status == .waiting ? " — \(s.waitingFor ?? "")" : ""
-        let title = "\(badge) \(name) · pid \(s.pid)\(suffix)"
+        let mainTitle = "\(badge) \(name) · pid \(s.pid)"
+        let secondary = secondaryLine(for: s)
 
-        let item = NSMenuItem(title: title, action: #selector(revealSession(_:)), keyEquivalent: "")
+        let attr = NSMutableAttributedString(
+            string: mainTitle,
+            attributes: [
+                .font: NSFont.menuFont(ofSize: 0),
+                .foregroundColor: NSColor.labelColor,
+            ]
+        )
+        if let secondary {
+            attr.append(NSAttributedString(string: "\n"))
+            let para = NSMutableParagraphStyle()
+            para.lineBreakMode = .byTruncatingTail
+            attr.append(NSAttributedString(
+                string: secondary,
+                attributes: [
+                    .font: NSFont.systemFont(ofSize: 11),
+                    .foregroundColor: NSColor.secondaryLabelColor,
+                    .paragraphStyle: para,
+                ]
+            ))
+        }
+
+        let item = NSMenuItem(title: "", action: #selector(revealSession(_:)), keyEquivalent: "")
+        item.attributedTitle = attr
         item.target = self
         item.representedObject = s
         item.toolTip = "\(s.cwd)\n按住 Option 点击在 Finder 中打开"
         return item
+    }
+
+    /// 副行内容,按 status 切换:
+    /// - waiting: ⏳ {waitingFor},fallback 到 prompt
+    /// - working: ▸ {tool} 优先,fallback 到 prompt
+    /// - idle/busy 非工具调用: » {recentPrompt}
+    /// 全空时返回 nil(主行单独显示)。
+    private func secondaryLine(for s: Session) -> String? {
+        let ctx = contextStore.contextByPid[s.pid]
+        switch s.status {
+        case .waiting:
+            if let w = s.waitingFor, !w.isEmpty { return "⏳ \(w)" }
+            if let p = ctx?.recentPrompt { return "⏳ \(p)" }
+            return nil
+        case .busy:
+            if let t = ctx?.lastTool { return "▸ \(t)" }
+            if let p = ctx?.recentPrompt { return "» \(p)" }
+            return nil
+        case .idle:
+            if let p = ctx?.recentPrompt { return "» \(p)" }
+            return nil
+        }
     }
 
     private func makeSessionDetailItem(_ s: Session) -> NSMenuItem? {
