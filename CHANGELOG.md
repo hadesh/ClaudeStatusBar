@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.7.0 — 2026-05-15
+
+信息密度提升的三件套。
+
+### 新增
+
+- **状态栏图标角标**:右上角红圈数字,表示「需要你」类事件总数 —— waiting 会话 + 待处理权限/AskUserQuestion 浮窗。计数按 sessionId 取并集,避免同一会话被 waiting 状态和浮窗双计。`>=10` 显示 `9+`。`badgeCount > 0` 时图标强制非模板,保证红色不被 AppKit 反相成灰。
+- **菜单条目副行**:每条 session 在主行下增加灰色小字第二行,按状态切换:waiting → `⏳ <waitingFor 或最近 prompt>`;working → `▸ <toolName>: <key>`(Bash 截 60 字、Edit/Write/Read/NotebookEdit 取 file_path basename);idle → `» <最近 prompt 截 50 字>`。数据反扫 `~/.claude/projects/.../*.jsonl`,30s 全量刷新 + sessions 增减时增量扫(新 `SessionContextReader` + `SessionContextStore`)。
+- **AskUserQuestion 改弹浮窗**:原本一闪即逝的「Claude Code 需要你回答」系统通知,改成跟权限浮窗同风格的右上角浮窗,展示完整问题文案 + 全部选项 label/description + 终端按键序号 ① ② ③。本期不代答(CLI 协议不支持外部代答),只提供「跳回终端答」按钮 + ✕。✕ 维持 abandon 语义,不会把 AskUserQuestion 转成 deny。
+
+### Wire 协议
+
+- 不变。`PermissionPromptStore` 现在被两个 manager 共用(`PermissionPromptPanelManager` 处理常规权限,`AskUserQuestionPanelManager` 处理 AskUserQuestion),hook helper 二进制不需要重发。
+
+---
+
 ## 0.6.2 — 2026-05-15
 
 授权面板的两处行为微调。
