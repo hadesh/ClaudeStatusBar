@@ -4,6 +4,7 @@ import Carbon.HIToolbox
 
 final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var statusItem: NSStatusItem?
+    private var iconAnimator: StatusIconAnimator?
     /// Ctrl+Shift+C toggle 状态栏菜单。一直注册,跟 PermissionPromptPanelManager
     /// 的 Y/N(只在浮窗可见时注册)用同 modifier 不同字母,无冲突。
     private var toggleMenuHotkey: GlobalHotkey?
@@ -56,6 +57,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+        iconAnimator = StatusIconAnimator(button: statusItem?.button)
 
         dispatcher.onWaitingClick = { [weak self] pid, cwd in
             self?.handleNotificationClick(pid: pid, cwd: cwd)
@@ -106,6 +108,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 guard let self else { return }
                 // 颜色变化:刷新菜单栏图标。
                 self.refreshIcon()
+                // 显示开关变化时菜单结构会变,主动重建一次(若数据未变,
+                // CombineLatest3 sink 不会重新触发)。
+                self.rebuildMenu(
+                    with: self.store.sessions,
+                    lifetime: self.usageTracker.lifetimeByModel,
+                    window: self.usageTracker.currentWindow
+                )
                 // 间隔变化:重建 reminder tracker(状态清零是预期行为)。
                 if self.settings.reminderInterval != self.lastReminderInterval {
                     self.reminderTracker = Self.makeReminderTracker(interval: self.settings.reminderInterval)
@@ -156,6 +165,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         permissionListener.stop()
         reminderTimer?.cancel()
         reminderTimer = nil
+        iconAnimator?.stop()
     }
 
     /// `~/Library/Application Support/ClaudeStatusBar/prompt.sock`. Created at
@@ -189,10 +199,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     func menuDidClose(_ menu: NSMenu) { menuIsShowing = false }
 
     private func refreshIcon() {
-        statusItem?.button?.image = StatusIcon.image(
-            for: store.aggregateStatus,
-            working: settings.workingColor,
-            attention: settings.attentionColor,
+        iconAnimator?.update(
+            status: store.aggregateStatus,
+            workingColor: settings.workingColor,
+            attentionColor: settings.attentionColor,
             badgeCount: attentionCount()
         )
     }
@@ -234,10 +244,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
 
         menu.addItem(.separator())
-        appendCurrentWindowItems(to: menu, window: window)
-        menu.addItem(.separator())
-        appendLifetimeItems(to: menu, lifetime: lifetime)
-        menu.addItem(.separator())
+        if settings.showCurrentWindow {
+            appendCurrentWindowItems(to: menu, window: window)
+            menu.addItem(.separator())
+        }
+        if settings.showLifetimeUsage {
+            appendLifetimeItems(to: menu, lifetime: lifetime)
+            menu.addItem(.separator())
+        }
         let prefsItem = NSMenuItem(
             title: "偏好设置...",
             action: #selector(openSettings(_:)),

@@ -8,6 +8,8 @@ public final class SettingsStore: ObservableObject {
         static let attentionColor = "settings.attentionColor"
         static let notificationsEnabled = "settings.notificationsEnabled"
         static let reminderIntervalSeconds = "settings.reminderIntervalSeconds"
+        static let showCurrentWindow = "settings.showCurrentWindow"
+        static let showLifetimeUsage = "settings.showLifetimeUsage"
     }
 
     public static let defaultWorkingColor = NSColor(srgbRed: 0.85, green: 0.47, blue: 0.27, alpha: 1.0)
@@ -38,6 +40,14 @@ public final class SettingsStore: ObservableObject {
         }
     }
 
+    @Published public var showCurrentWindow: Bool {
+        didSet { defaults.set(showCurrentWindow, forKey: Key.showCurrentWindow) }
+    }
+
+    @Published public var showLifetimeUsage: Bool {
+        didSet { defaults.set(showLifetimeUsage, forKey: Key.showLifetimeUsage) }
+    }
+
     public init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
         self.workingColor = (defaults.string(forKey: Key.workingColor).flatMap(Self.decodeColor)) ?? Self.defaultWorkingColor
@@ -48,6 +58,8 @@ public final class SettingsStore: ObservableObject {
         } else {
             self.reminderInterval = Self.defaultReminderInterval
         }
+        self.showCurrentWindow = defaults.object(forKey: Key.showCurrentWindow) as? Bool ?? true
+        self.showLifetimeUsage = defaults.object(forKey: Key.showLifetimeUsage) as? Bool ?? false
     }
 
     public func resetColors() {

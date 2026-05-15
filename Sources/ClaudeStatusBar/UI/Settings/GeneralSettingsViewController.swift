@@ -10,6 +10,9 @@ public final class GeneralSettingsViewController: NSViewController {
     private let notificationsCheckbox = NSButton(checkboxWithTitle: "启用等待通知", target: nil, action: nil)
     private let intervalPopup = NSPopUpButton(frame: .zero, pullsDown: false)
 
+    private let showCurrentWindowCheckbox = NSButton(checkboxWithTitle: "显示「本 5 小时」用量", target: nil, action: nil)
+    private let showLifetimeCheckbox = NSButton(checkboxWithTitle: "显示「总用量(按模型)」", target: nil, action: nil)
+
     private let hookJSONTextView = NSTextView()
     private let hookJSONScrollView = NSScrollView()
     private let hookApplyButton = NSButton(title: "应用", target: nil, action: nil)
@@ -70,6 +73,24 @@ public final class GeneralSettingsViewController: NSViewController {
         stack.addArrangedSubview(loginItemCheckbox)
         stack.addArrangedSubview(notificationsCheckbox)
         stack.addArrangedSubview(intervalRow)
+
+        // ── 菜单显示区段 ─────────────────────────────────────────
+        let menuSeparator = NSBox()
+        menuSeparator.boxType = .separator
+        menuSeparator.translatesAutoresizingMaskIntoConstraints = false
+        menuSeparator.heightAnchor.constraint(equalToConstant: 1).isActive = true
+        stack.addArrangedSubview(menuSeparator)
+
+        let menuHeader = NSTextField(labelWithString: "菜单显示")
+        menuHeader.font = .boldSystemFont(ofSize: NSFont.systemFontSize)
+        stack.addArrangedSubview(menuHeader)
+
+        showCurrentWindowCheckbox.target = self
+        showCurrentWindowCheckbox.action = #selector(toggleShowCurrentWindow(_:))
+        showLifetimeCheckbox.target = self
+        showLifetimeCheckbox.action = #selector(toggleShowLifetime(_:))
+        stack.addArrangedSubview(showCurrentWindowCheckbox)
+        stack.addArrangedSubview(showLifetimeCheckbox)
 
         // ── Hook 配置区段 ─────────────────────────────────────────
         let hookSeparator = NSBox()
@@ -154,6 +175,8 @@ public final class GeneralSettingsViewController: NSViewController {
         notificationsCheckbox.state = settings.notificationsEnabled ? .on : .off
         intervalPopup.isEnabled = settings.notificationsEnabled
         applyInterval(settings.reminderInterval)
+        showCurrentWindowCheckbox.state = settings.showCurrentWindow ? .on : .off
+        showLifetimeCheckbox.state = settings.showLifetimeUsage ? .on : .off
     }
 
     private func applyInterval(_ interval: TimeInterval?) {
@@ -179,6 +202,14 @@ public final class GeneralSettingsViewController: NSViewController {
         let idx = sender.indexOfSelectedItem
         guard choices.indices.contains(idx) else { return }
         settings.reminderInterval = choices[idx].seconds
+    }
+
+    @objc private func toggleShowCurrentWindow(_ sender: NSButton) {
+        settings.showCurrentWindow = sender.state == .on
+    }
+
+    @objc private func toggleShowLifetime(_ sender: NSButton) {
+        settings.showLifetimeUsage = sender.state == .on
     }
 
     // MARK: - Hook 配置
