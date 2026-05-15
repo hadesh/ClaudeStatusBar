@@ -116,11 +116,12 @@ public final class GeneralSettingsViewController: NSViewController {
 
         configureHookJSONEditor()
         stack.addArrangedSubview(hookJSONScrollView)
-        // 高度 200pt(够展示完整 default JSON),内部滚动;不做交互式 resize。
+        // 高度 100pt:加了「菜单显示」分组后整页变高,这里压缩一半避免 tabbar
+        // 被裁;长 JSON 内部滚动即可。
         hookJSONScrollView.translatesAutoresizingMaskIntoConstraints = false
         NSLayoutConstraint.activate([
             hookJSONScrollView.widthAnchor.constraint(equalToConstant: 440),
-            hookJSONScrollView.heightAnchor.constraint(equalToConstant: 200),
+            hookJSONScrollView.heightAnchor.constraint(equalToConstant: 100),
         ])
 
         hookApplyButton.target = self
