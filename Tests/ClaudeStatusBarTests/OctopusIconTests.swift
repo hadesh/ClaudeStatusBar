@@ -32,11 +32,22 @@ final class OctopusIconTests: XCTestCase {
         XCTAssertTrue(anyOpaque)
     }
 
-    func testBadgeCountZeroProducesSameImageAsNoBadge() {
-        // badgeCount=0 (默认) 应该等价于不带角标,像素相同。
-        let withoutArg = OctopusIcon.image(color: .red, isTemplate: false)
-        let withZero = OctopusIcon.image(color: .red, isTemplate: false, badgeCount: 0)
-        XCTAssertEqual(withoutArg.tiffRepresentation, withZero.tiffRepresentation)
+    func testNoBadgeWhenCountIsZero() {
+        // badgeCount=0 不应在右上角画红圈,跟显式不带 badge 视觉一致。
+        let img = OctopusIcon.image(
+            color: .black, size: NSSize(width: 32, height: 32),
+            isTemplate: false, badgeCount: 0
+        )
+        guard let rep = img.tiffRepresentation.flatMap(NSBitmapImageRep.init(data:))
+        else { return XCTFail("bitmap rep") }
+        var redish = 0
+        for x in (rep.pixelsWide / 2)..<rep.pixelsWide {
+            for y in 0..<(rep.pixelsHigh / 2) {
+                if let c = rep.colorAt(x: x, y: y),
+                   c.redComponent > 0.7, c.greenComponent < 0.3 { redish += 1 }
+            }
+        }
+        XCTAssertEqual(redish, 0, "icon with badgeCount=0 should have no red badge pixels")
     }
 
     func testBadgeCountAddsRedPixelsTopRight() {
@@ -64,8 +75,15 @@ final class OctopusIconTests: XCTestCase {
     }
 
     func testBadgeCountClampsAtNinePlus() {
-        // 渲染不应崩溃;具体字符样式不强制,只验证渲染完成。
-        let img = OctopusIcon.image(color: .black, size: NSSize(width: 32, height: 32), isTemplate: false, badgeCount: 42)
-        XCTAssertEqual(img.size, NSSize(width: 32, height: 32))
+        // count=10 与 count=42 都应渲染 "9+",像素一致。
+        let ten = OctopusIcon.image(
+            color: .black, size: NSSize(width: 32, height: 32),
+            isTemplate: false, badgeCount: 10
+        )
+        let fortyTwo = OctopusIcon.image(
+            color: .black, size: NSSize(width: 32, height: 32),
+            isTemplate: false, badgeCount: 42
+        )
+        XCTAssertEqual(ten.tiffRepresentation, fortyTwo.tiffRepresentation)
     }
 }
