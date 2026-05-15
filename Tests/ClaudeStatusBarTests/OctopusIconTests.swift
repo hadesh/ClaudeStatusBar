@@ -86,4 +86,35 @@ final class OctopusIconTests: XCTestCase {
         )
         XCTAssertEqual(ten.tiffRepresentation, fortyTwo.tiffRepresentation)
     }
+
+    func testHasMultipleAnimationFrames() {
+        // working 态切帧动画依赖 frameCount > 1。
+        XCTAssertGreaterThan(OctopusIcon.frameCount, 1)
+    }
+
+    func testFramesProduceDistinctPixels() {
+        // 帧之间必须有可见差异,否则动画不可见。
+        let f0 = OctopusIcon.image(
+            color: .red, size: NSSize(width: 24, height: 24),
+            isTemplate: false, frameIndex: 0
+        )
+        let f1 = OctopusIcon.image(
+            color: .red, size: NSSize(width: 24, height: 24),
+            isTemplate: false, frameIndex: 1
+        )
+        XCTAssertNotEqual(f0.tiffRepresentation, f1.tiffRepresentation)
+    }
+
+    func testFrameIndexWrapsAroundFrameCount() {
+        // frameIndex 越界时应取模回到合法范围,与同位置的合法帧像素一致。
+        let canonical = OctopusIcon.image(
+            color: .red, size: NSSize(width: 24, height: 24),
+            isTemplate: false, frameIndex: 1
+        )
+        let wrapped = OctopusIcon.image(
+            color: .red, size: NSSize(width: 24, height: 24),
+            isTemplate: false, frameIndex: 1 + OctopusIcon.frameCount
+        )
+        XCTAssertEqual(canonical.tiffRepresentation, wrapped.tiffRepresentation)
+    }
 }
