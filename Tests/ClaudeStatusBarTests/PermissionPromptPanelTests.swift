@@ -56,13 +56,16 @@ final class PermissionPromptPanelTests: XCTestCase {
         XCTAssertFalse(close?.isHidden ?? true, "close button must be visible")
     }
 
-    func testWindowShouldCloseFiresDeny() {
+    func testWindowShouldCloseFiresAbandonNotDeny() {
+        // ✕ means "let me answer in the terminal", not "deny". Regression
+        // guard: previously this fired .deny which silently rejected the tool
+        // call instead of yielding to the terminal prompt.
         let request = PermissionPromptRequest(id: "x", toolName: "Bash", input: [:])
-        var captured: PermissionPromptDecision.Behavior?
+        var captured: PermissionPromptPanel.Outcome?
         let panel = PermissionPromptPanel(request: request) { captured = $0 }
         let allowed = panel.windowShouldClose(panel)
         XCTAssertFalse(allowed, "panel must defer the actual close to the manager")
-        XCTAssertEqual(captured, .deny)
+        XCTAssertEqual(captured, .abandon)
     }
 
     func testCollectionBehaviorFlagsAreCompatible() {

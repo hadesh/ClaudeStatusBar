@@ -24,7 +24,7 @@ final class PermissionPromptStoreTests: XCTestCase {
     func testResolveFiresReplyHandlerExactlyOnce() {
         let store = PermissionPromptStore(timeout: 1000, scheduler: noopScheduler)
         var calls: [PermissionPromptDecision] = []
-        store.add(makeRequest(id: "a")) { calls.append($0) }
+        store.add(makeRequest(id: "a")) { if let d = $0 { calls.append(d) } }
         store.resolve(id: "a", decision: .allow(id: "a", input: [:]))
         XCTAssertEqual(calls.count, 1)
         XCTAssertEqual(calls[0].behavior, .allow)
@@ -89,7 +89,7 @@ final class PermissionPromptStoreTests: XCTestCase {
         }
         let store = PermissionPromptStore(timeout: 60, scheduler: scheduler)
         var calls: [PermissionPromptDecision] = []
-        store.add(makeRequest(id: "a")) { calls.append($0) }
+        store.add(makeRequest(id: "a")) { if let d = $0 { calls.append(d) } }
         store.resolve(id: "a", decision: .allow(id: "a", input: [:]))
         fire!()
         XCTAssertEqual(calls.count, 1, "timer firing after resolve should be a no-op")
@@ -184,6 +184,46 @@ final class PermissionPromptStoreTests: XCTestCase {
         store.add(makeRequest(id: "a")) { _ in }
         store.resolveAllowAlways(id: "a")
         XCTAssertEqual(seen, ["a"])
+    }
+
+    func testAbandonReplyReceivesNil() {
+        let store = PermissionPromptStore(timeout: 1000, scheduler: noopScheduler)
+        var calls: [PermissionPromptDecision?] = []
+        store.add(makeRequest(id: "a")) { calls.append($0) }
+        store.abandon(id: "a")
+        XCTAssertEqual(calls.count, 1)
+        XCTAssertNil(calls[0], "abandon must signal nil so the listener writes nothing")
+        XCTAssertEqual(store.pendingIds, [])
+    }
+
+    func testAbandonFiresResolvedSignal() {
+        let store = PermissionPromptStore(timeout: 1000, scheduler: noopScheduler)
+        var seen: [String] = []
+        let sub = store.resolved.sink { seen.append($0) }
+        defer { sub.cancel() }
+        store.add(makeRequest(id: "a")) { _ in }
+        store.abandon(id: "a")
+        XCTAssertEqual(seen, ["a"], "manager relies on resolved to dismiss the panel")
+    }
+
+    func testAbandonOnUnknownIdIsNoOp() {
+        let store = PermissionPromptStore(timeout: 1000, scheduler: noopScheduler)
+        var seen: [String] = []
+        let sub = store.resolved.sink { seen.append($0) }
+        defer { sub.cancel() }
+        store.abandon(id: "ghost")
+        XCTAssertEqual(seen, [])
+    }
+
+    func testAbandonCancelsTimeout() {
+        var cancelCalled = false
+        let scheduler: PermissionPromptStore.Scheduler = { _, _ in
+            return { cancelCalled = true }
+        }
+        let store = PermissionPromptStore(timeout: 60, scheduler: scheduler)
+        store.add(makeRequest(id: "a")) { _ in }
+        store.abandon(id: "a")
+        XCTAssertTrue(cancelCalled)
     }
 
     func testPendingSessionIdsTracksLiveRequests() {

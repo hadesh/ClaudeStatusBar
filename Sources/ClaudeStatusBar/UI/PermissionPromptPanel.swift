@@ -1,11 +1,23 @@
 import Cocoa
 
-/// Floating non-activating panel showing one pending permission request and a
-/// pair of `允许 / 拒绝` buttons. Single click on either button fires the
-/// supplied response closure. Esc / close button map to deny, Return to allow,
-/// Tab cycles between the two buttons.
+/// Floating non-activating panel showing one pending permission request with
+/// `允许 / 一直允许 / 拒绝` buttons. Single click on any button fires the
+/// supplied response closure. Esc maps to deny, Return to allow, Tab cycles
+/// across all three buttons. The window's close button (✕) maps to `abandon`,
+/// not deny — the user's intent is "I'll answer in the terminal", so we let
+/// the helper exit silently and let the CLI's terminal prompt take over.
 final class PermissionPromptPanel: NSPanel, NSWindowDelegate {
-    typealias Response = (PermissionPromptDecision.Behavior) -> Void
+    /// Panel-internal signal. Distinct from `PermissionPromptDecision.Behavior`
+    /// (which is the app→helper wire type) so `abandon` doesn't leak into
+    /// JSON encoders that have no business serializing it.
+    enum Outcome {
+        case allow
+        case allowAlways
+        case deny
+        /// User dismissed the panel without making a decision (e.g. ✕).
+        case abandon
+    }
+    typealias Response = (Outcome) -> Void
 
     static let panelWidth: CGFloat = 420
     static let bodyMaxHeight: CGFloat = 160
@@ -50,10 +62,13 @@ final class PermissionPromptPanel: NSPanel, NSWindowDelegate {
         }
     }
 
-    // Window-close (✕) maps to deny so the hook resolves cleanly instead of
-    // hanging until the 5-minute store timeout.
+    // Window-close (✕) means "I'll go answer in the terminal" — abandon, don't
+    // deny. The store's reply receives nil; the listener closes the helper
+    // socket without writing; the helper exits silently; the CLI's terminal
+    // prompt wins the race. Manager still receives the resolved signal and
+    // closes this panel through the normal dismiss path.
     func windowShouldClose(_ sender: NSWindow) -> Bool {
-        onResponse(.deny)
+        onResponse(.abandon)
         return false  // manager calls panel.close() after store.resolved fires
     }
 

@@ -86,6 +86,38 @@ final class PermissionPromptListenerTests: XCTestCase {
         clientA.close(); clientB.close()
     }
 
+    func testAbandonClosesSocketWithoutResponse() throws {
+        // ✕-on-panel path: store.abandon → listener sees nil reply → closes
+        // the helper socket without writing. Helper's read must return EOF
+        // (empty), not a JSON decision.
+        let path = tempSocketPath()
+        let store = PermissionPromptStore(timeout: 1000, scheduler: { _, _ in {} })
+        let listener = PermissionPromptListener(store: store, socketPath: path)
+        try listener.start()
+        defer { listener.stop() }
+
+        let arrived = expectation(description: "store received request")
+        let sub = store.incoming.sink { _ in arrived.fulfill() }
+        defer { sub.cancel() }
+
+        let client = try TestUnixClient(path: path)
+        let request = PermissionPromptRequest(
+            id: "abnd", toolName: "Bash",
+            input: ["command": .string("ls")]
+        )
+        var payload = try JSONEncoder().encode(request)
+        payload.append(0x0A)
+        try client.writeAll(payload)
+
+        wait(for: [arrived], timeout: 2.0)
+        store.abandon(id: "abnd")
+
+        // Helper-side read must surface EOF (nil), not a wire response.
+        let response = client.readLine(timeout: 2.0)
+        XCTAssertNil(response, "abandon must not write a response — helper should see EOF")
+        client.close()
+    }
+
     func testHelperDisconnectAutoResolvesAndDismisses() throws {
         // Simulates the CLI killing the hook subprocess because the user
         // answered y/n in the terminal first. The listener should notice the

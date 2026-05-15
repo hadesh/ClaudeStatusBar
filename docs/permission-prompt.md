@@ -24,20 +24,34 @@ ClaudeStatusBar.app  →  浮动面板(允许 / 一直允许 / 拒绝)
 - **拒绝** —— 拒绝这一次。
 
 **键盘 / 焦点:**
-- Return → 允许(单次),Esc / ✕ → 拒绝
+- Return → 允许(单次)
+- Esc → 拒绝
+- ✕(窗口关闭按钮)→ **不做决策**,只关掉浮窗,把这次请求让回给终端原生 prompt(等于"我去终端答")。**不是** deny。
 - 焦点在面板上时 Tab 在 拒绝 → 一直允许 → 允许 间循环;聚焦后 Space 触发
 - **全局热键**(无视当前焦点哪个 app):**Ctrl+Shift+Y** 允许最新一条权限请求,**Ctrl+Shift+N** 拒绝。这两个热键只在至少有一个面板可见时注册,关掉就反注册,不会污染你的全局快捷键。
 - **「一直允许」没有全局热键**(也没有键盘快捷键)——这是个"记住决策"的动作,需要你看着面板再点。
 
 `PermissionRequest` hook 跟终端原生 prompt 在 CLI 内部是 **`Promise.race`**——谁先回应谁赢。也就是说:
-- 用户在面板点了允许 / 一直允许 → hook 赢,终端 prompt 自动 abort
+- 用户在面板点了允许 / 一直允许 / 拒绝 → hook 赢,终端 prompt 自动 abort
+- 用户在面板按 ✕ → 主 app **不替用户决策**,断开 hook 的 socket 让 helper exit(0) 不写 stdout,终端 prompt 完整接管 race(等用户在终端按 y/n)
 - 用户直接在终端按 y/n → 终端赢,**面板对应那条会自动消失**:CLI 杀掉了 hook 子进程,主 app 监听到 socket EOF,自动 `resolveDeny` 触发 `store.resolved`,面板被关闭
 - 状态栏 app 没在跑 / socket 连不上 → hook 立即退出不输出任何东西,终端 prompt 直接生效,体验等同 vanilla claude
-- 5 分钟内主 app 没收到 panel 决策 → 自动 deny 兜底
+- 5 分钟内主 app 没收到 panel 决策(且终端那边也没动) → 自动 deny 兜底
 
 跟系统通知**无关**——面板是自家窗口,不走 `UNUserNotificationCenter`。所以你不需要配置「提醒样式」,也不依赖系统通知权限,Focus / Do Not Disturb 模式下也照常工作。
 
-**系统通知不再用于工具权限请求。** 浮窗已经在该会话上承担了"等待响应"的告知,主 app 会主动**抑制**这类会话的「Claude Code 等待响应」banner(以及 5s 周期的二次提醒),避免和面板叠一层。系统通知 banner 只保留任务完成场景:CLI 会话从 `busy` 转回 `idle` 时弹「Claude Code 任务完成 · {项目名}」,点击跳回对应终端。
+**系统通知不再用于工具权限请求。** 浮窗已经在该会话上承担了"等待响应"的告知,主 app 会主动**抑制**这类会话的「Claude Code 等待响应」banner(以及 5s 周期的二次提醒),避免和面板叠一层。系统通知 banner 只保留两类场景:
+- **任务完成**:CLI 会话从 `busy` 转回 `idle` 时弹「Claude Code 任务完成 · {项目名}」,点击跳回对应终端。
+- **AskUserQuestion**(下面)。
+
+## 例外:`AskUserQuestion` 不弹浮窗
+
+`AskUserQuestion` 是 Claude Code 内置的"多选题"工具(LLM 用它跟用户做澄清),触发的 PermissionRequest 在面板里只能给 allow / deny,但 askUserQuestion 真正的内容是**多个选项**,只能在终端里答。所以主 app 对这个工具特殊处理:
+- **不弹浮窗**(PanelManager 在 `toolsRoutedAwayFromPanel` 里硬编码 `AskUserQuestion`,直接跳过)
+- **改弹系统通知**「Claude Code 需要你回答 · {项目名} · 请回到终端选择」,点击跳回对应终端
+- **立刻 abandon**(主 app 不答,等同上面 ✕ 的路径),让 CLI 那边的终端 prompt 接管,askUserQuestion 的多选题正常出现在终端,用户答完即可
+
+要给其他工具加同样的"不弹面板,只通知"处理,改 `PermissionPromptPanelManager.toolsRoutedAwayFromPanel` 这个集合即可,两端的订阅会自动按 toolName 分流。
 
 ## 配置(两步)
 

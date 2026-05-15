@@ -97,8 +97,13 @@ public final class PermissionPromptListener {
 
         let semaphore = DispatchSemaphore(value: 0)
         var captured: PermissionPromptDecision?
+        var abandoned = false
         store.add(request) { decision in
-            captured = decision
+            if let decision {
+                captured = decision
+            } else {
+                abandoned = true  // panel ✕ → close without writing → terminal wins race
+            }
             semaphore.signal()
         }
 
@@ -124,6 +129,7 @@ public final class PermissionPromptListener {
 
         semaphore.wait()
 
+        if abandoned { return }  // defer closes the fd; helper sees EOF → exit(0)
         guard let decision = captured,
               var data = try? JSONEncoder().encode(decision) else { return }
         data.append(0x0A)

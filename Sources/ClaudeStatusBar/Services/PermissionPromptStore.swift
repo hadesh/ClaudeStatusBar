@@ -3,8 +3,13 @@ import Combine
 
 /// Holds in-flight permission prompts. Each entry carries a reply closure that
 /// resolves the originating socket connection. Auto-denies after `timeout`.
+///
+/// `nil` passed to `Reply` means "abandon" — the listener should close the fd
+/// without writing any response, so the helper exits without writing stdout
+/// and the CLI's terminal prompt wins the race. Used when the user dismisses
+/// the panel via ✕ (intent: "let me answer in the terminal").
 public final class PermissionPromptStore {
-    public typealias Reply = (PermissionPromptDecision) -> Void
+    public typealias Reply = (PermissionPromptDecision?) -> Void
     /// (interval, work) -> cancel. Lets tests inject deterministic timing.
     public typealias Scheduler = (TimeInterval, @escaping () -> Void) -> () -> Void
 
@@ -94,6 +99,20 @@ public final class PermissionPromptStore {
 
     public func resolveDeny(id: String, message: String) {
         resolve(id: id, decision: .deny(id: id, message: message))
+    }
+
+    /// 用户点 ✕ 关掉浮窗,意图是"我去终端答"。我们不替用户做 deny,而是让
+    /// helper 端读到 EOF 自己 exit(0) 不写 stdout,CLI 看到 hook 没输出就让
+    /// 终端 prompt 完整接管 race。entry 离开后 `resolved` 信号照常 fire,
+    /// 所以 manager 能跟 allow/deny 同样的路径关掉面板。
+    public func abandon(id: String) {
+        lock.lock()
+        let entry = entries.removeValue(forKey: id)
+        lock.unlock()
+        guard let entry else { return }
+        entry.cancelTimeout()
+        entry.reply(nil)
+        resolved.send(id)
     }
 
     private func fireTimeout(id: String) {

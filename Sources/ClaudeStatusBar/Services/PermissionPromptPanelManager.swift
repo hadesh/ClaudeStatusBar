@@ -20,6 +20,11 @@ final class PermissionPromptPanelManager {
     private var allowHotkey: GlobalHotkey?
     private var denyHotkey: GlobalHotkey?
 
+    /// 这些工具的 PermissionRequest 不弹浮窗 —— `AskUserQuestion` 是结构化的
+    /// 多选题,在浮窗按 allow/deny 没意义;主 app 改成发系统通知提醒用户去
+    /// 终端答。AppDelegate 会在同一个 incoming 流上单独路由这部分。
+    static let toolsRoutedAwayFromPanel: Set<String> = ["AskUserQuestion"]
+
     init(store: PermissionPromptStore) {
         self.store = store
         store.incoming
@@ -33,9 +38,10 @@ final class PermissionPromptPanelManager {
     }
 
     func present(_ request: PermissionPromptRequest) {
+        guard !Self.toolsRoutedAwayFromPanel.contains(request.toolName) else { return }
         guard !entries.contains(where: { $0.id == request.id }) else { return }
-        let panel = PermissionPromptPanel(request: request) { [weak self] behavior in
-            self?.handleResponse(id: request.id, behavior: behavior)
+        let panel = PermissionPromptPanel(request: request) { [weak self] outcome in
+            self?.handleResponse(id: request.id, outcome: outcome)
         }
         entries.append((request.id, panel))
         if entries.count == 1 {
@@ -58,21 +64,23 @@ final class PermissionPromptPanelManager {
 
     /// Resolves the **most recent** pending panel — what the user means by
     /// "the latest 气泡" when triggering the global hotkey.
-    func resolveLatest(_ behavior: PermissionPromptDecision.Behavior) {
+    func resolveLatest(_ outcome: PermissionPromptPanel.Outcome) {
         guard let last = entries.last else { return }
-        handleResponse(id: last.id, behavior: behavior)
+        handleResponse(id: last.id, outcome: outcome)
     }
 
     // MARK: - Private
 
-    private func handleResponse(id: String, behavior: PermissionPromptDecision.Behavior) {
-        switch behavior {
+    private func handleResponse(id: String, outcome: PermissionPromptPanel.Outcome) {
+        switch outcome {
         case .allow:
             store.resolveAllow(id: id)
         case .allowAlways:
             store.resolveAllowAlways(id: id)
         case .deny:
             store.resolveDeny(id: id, message: "User denied via status bar")
+        case .abandon:
+            store.abandon(id: id)
         }
     }
 

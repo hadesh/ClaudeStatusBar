@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.6.2 — 2026-05-15
+
+授权面板的两处行为微调。
+
+### 改动
+
+- **✕ 不再当成 deny**:点浮窗右上角的 ✕,主 app 不替用户决策,而是**断开 hook 的 socket** 让 helper exit(0) 不写 stdout,CLI 端的终端 prompt 完整接管(等用户去终端按 y/n)。新增 `PermissionPromptStore.abandon(id:)`,`Reply` 类型由 `(Decision) -> Void` 改为 `(Decision?) -> Void`,nil 即 abandon 信号。原来的"✕ → 静默 deny"是个误伤:用户想"我去终端答",结果工具调用被拒了。
+- **`AskUserQuestion` 不弹浮窗,改用系统通知**:LLM 的 askUserQuestion 工具是结构化多选题,只能在终端答。主 app 检测 `toolName == "AskUserQuestion"` 时:
+  - PanelManager 跳过(不弹浮窗)
+  - AppDelegate 弹一条系统通知「Claude Code 需要你回答 · {项目名} · 请回到终端选择」,点击跳回对应终端
+  - 立刻 abandon 让 hook exit,CLI 那边终端 prompt 完整接管,askUserQuestion 的多选题正常出现等用户答
+  - 若要给其他工具加同样路由,改 `PermissionPromptPanelManager.toolsRoutedAwayFromPanel` 一处即可。
+
+### Wire 协议
+
+- 拆出 `PermissionPromptPanel.Outcome` enum(`allow / allowAlways / deny / abandon`)作为浮窗内部回调类型。`PermissionPromptDecision.Behavior`(wire 类型)保持只有 `allow / deny / allowAlways` 三个 case —— `abandon` 不该被 JSON encode,分两个 enum 是为了不让它误漏到 wire。
+
+---
+
 ## 0.6.1 — 2026-05-15
 
 授权面板的三处修复。

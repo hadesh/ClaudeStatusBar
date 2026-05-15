@@ -61,6 +61,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             NSLog("PermissionPromptListener failed to start: \(error)")
         }
 
+        // AskUserQuestion 不弹浮窗 —— 它是结构化的多选题,只能在终端答。
+        // 这里发一条系统通知提醒用户,然后立刻 abandon 让 hook exit,CLI 端
+        // 终端 prompt 接管。PanelManager 那边已经 toolName-skip 这种请求。
+        permissionStore.incoming
+            .receive(on: DispatchQueue.main)
+            .filter { PermissionPromptPanelManager.toolsRoutedAwayFromPanel.contains($0.toolName) }
+            .sink { [weak self] req in
+                guard let self else { return }
+                self.routeAskUserQuestionToTerminal(req)
+            }
+            .store(in: &cancellables)
+
         store.$sessions
             .receive(on: DispatchQueue.main)
             .sink { [weak self] sessions in
@@ -340,6 +352,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             title: "找不到对应终端",
             body: "按住 Option 点击可在 Finder 中打开 cwd"
         )
+    }
+
+    /// AskUserQuestion 路由:发系统通知 + 立刻 abandon。abandon 让 listener 关
+    /// 掉 helper 的 socket fd,helper 读到 EOF exit(0) 不写 stdout,CLI 那边
+    /// race 走终端 prompt(askUserQuestion 的多选题就在终端弹出来等用户答)。
+    private func routeAskUserQuestionToTerminal(_ req: PermissionPromptRequest) {
+        let project = req.cwd.map { ($0 as NSString).lastPathComponent } ?? "(unknown)"
+        // pid 通过 sessionId 反查;反查不到时 click 路径会 fall back 到 cwd。
+        let pid = store.sessions.first(where: { $0.sessionId == req.sessionId })?.pid ?? 0
+        var userInfo: [String: Any] = ["pid": pid]
+        if let cwd = req.cwd { userInfo["cwd"] = cwd }
+        if settings.notificationsEnabled {
+            notifier.notify(
+                title: "Claude Code 需要你回答",
+                body: "\(project) · 请回到终端选择",
+                userInfo: userInfo
+            )
+        }
+        permissionStore.abandon(id: req.id)
     }
 
     private func handleNotificationClick(pid: Int, cwd: String?) {
