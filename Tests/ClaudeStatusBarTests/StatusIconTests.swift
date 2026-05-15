@@ -27,4 +27,20 @@ final class StatusIconTests: XCTestCase {
         XCTAssertEqual(img.size.width, 18)
         XCTAssertEqual(img.size.height, 18)
     }
+
+    func testIdleWithBadgeIsNotTemplate() {
+        // badgeCount > 0 时不能用模板模式 —— 红圈会被 AppKit 强制变灰。
+        XCTAssertFalse(StatusIcon.image(for: .idle, badgeCount: 1).isTemplate)
+    }
+
+    func testIdleZeroBadgeStillTemplate() {
+        XCTAssertTrue(StatusIcon.image(for: .idle, badgeCount: 0).isTemplate)
+    }
+
+    func testWorkingBadgePropagatesToOctopus() {
+        // 不直接断言像素;只验证 badgeCount > 0 + 任意状态下结果非 nil 且尺寸正确。
+        let img = StatusIcon.image(for: .working, badgeCount: 2)
+        XCTAssertEqual(img.size.width, 18)
+        XCTAssertFalse(img.isTemplate)
+    }
 }
