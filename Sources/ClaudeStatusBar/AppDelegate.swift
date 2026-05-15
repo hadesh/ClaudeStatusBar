@@ -17,6 +17,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private let dispatcher = NotificationDispatcher()
     private let permissionStore = PermissionPromptStore()
     private lazy var permissionPanels = PermissionPromptPanelManager(store: permissionStore)
+    private lazy var askUserQuestionPanels = AskUserQuestionPanelManager(
+        store: permissionStore,
+        navigator: AppDelegateTerminalActivator(delegate: self)
+    )
     private lazy var permissionListener = PermissionPromptListener(
         store: permissionStore,
         socketPath: AppDelegate.permissionSocketPath()
@@ -61,24 +65,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // Touch panelManager so its store subscriptions are wired before the
         // listener starts accepting requests.
         _ = permissionPanels
+        _ = askUserQuestionPanels  // 触发 lazy 实例化,把 sink 接上
 
         do {
             try permissionListener.start()
         } catch {
             NSLog("PermissionPromptListener failed to start: \(error)")
         }
-
-        // AskUserQuestion 不弹浮窗 —— 它是结构化的多选题,只能在终端答。
-        // 这里发一条系统通知提醒用户,然后立刻 abandon 让 hook exit,CLI 端
-        // 终端 prompt 接管。PanelManager 那边已经 toolName-skip 这种请求。
-        permissionStore.incoming
-            .receive(on: DispatchQueue.main)
-            .filter { PermissionPromptPanelManager.toolsRoutedAwayFromPanel.contains($0.toolName) }
-            .sink { [weak self] req in
-                guard let self else { return }
-                self.routeAskUserQuestionToTerminal(req)
-            }
-            .store(in: &cancellables)
 
         // 浮窗状态变化(新请求 / 用户答复 / 终端 race) 都影响 attentionCount,
         // 跟着刷新一下图标角标。
@@ -452,23 +445,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         )
     }
 
-    /// AskUserQuestion 路由:发系统通知 + 立刻 abandon。abandon 让 listener 关
-    /// 掉 helper 的 socket fd,helper 读到 EOF exit(0) 不写 stdout,CLI 那边
-    /// race 走终端 prompt(askUserQuestion 的多选题就在终端弹出来等用户答)。
-    private func routeAskUserQuestionToTerminal(_ req: PermissionPromptRequest) {
-        let project = req.cwd.map { ($0 as NSString).lastPathComponent } ?? "(unknown)"
-        // pid 通过 sessionId 反查;反查不到时 click 路径会 fall back 到 cwd。
-        let pid = store.sessions.first(where: { $0.sessionId == req.sessionId })?.pid ?? 0
-        var userInfo: [String: Any] = ["pid": pid]
-        if let cwd = req.cwd { userInfo["cwd"] = cwd }
-        if settings.notificationsEnabled {
-            notifier.notify(
-                title: "Claude Code 需要你回答",
-                body: "\(project) · 请回到终端选择",
-                userInfo: userInfo
-            )
+    /// AskUserQuestion 浮窗「跳回终端」按钮触发。复用现有
+    /// findOwningApp / openCwdInFinder 路径。sessionId → pid 反查走
+    /// SessionStore 现有数据。
+    func activateTerminal(sessionId: String?, cwd: String?) {
+        if let sid = sessionId,
+           let pid = store.sessions.first(where: { $0.sessionId == sid })?.pid,
+           let app = findOwningApp(of: pid)
+        {
+            app.activate(options: [.activateAllWindows])
+            return
         }
-        permissionStore.abandon(id: req.id)
+        if let cwd { openCwdInFinder(cwd) }
+        else { NSSound.beep() }
     }
 
     private func handleNotificationClick(pid: Int, cwd: String?) {
@@ -481,5 +470,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         } else {
             NSSound.beep()
         }
+    }
+}
+
+/// 把 AppDelegate 已经在用的「pid → NSRunningApplication / cwd → Finder」
+/// 路径暴露成 TerminalActivating。manager 不直接持 NSApp,方便单测。
+private final class AppDelegateTerminalActivator: TerminalActivating {
+    weak var delegate: AppDelegate?
+    init(delegate: AppDelegate) { self.delegate = delegate }
+    func activate(forSessionId sessionId: String?, cwd: String?) {
+        delegate?.activateTerminal(sessionId: sessionId, cwd: cwd)
     }
 }
