@@ -1,8 +1,14 @@
 import Cocoa
 import Combine
+import Carbon.HIToolbox
 
-final class AppDelegate: NSObject, NSApplicationDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var statusItem: NSStatusItem?
+    /// Ctrl+Shift+C toggle 状态栏菜单。一直注册,跟 PermissionPromptPanelManager
+    /// 的 Y/N(只在浮窗可见时注册)用同 modifier 不同字母,无冲突。
+    private var toggleMenuHotkey: GlobalHotkey?
+    /// 通过 NSMenuDelegate 维护;`performClick` 后系统弹菜单 → menuWillOpen 翻 true。
+    private var menuIsShowing = false
     private let store = SessionStore()
     private let usageTracker = UsageTracker()
     private lazy var watcher = SessionWatcher(store: store)
@@ -128,6 +134,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         t.resume()
         reminderTimer = t
+
+        toggleMenuHotkey = GlobalHotkey(
+            keyCode: kVK_ANSI_C,
+            modifiers: controlKey | shiftKey
+        ) { [weak self] in
+            self?.toggleStatusMenu()
+        }
     }
 
     func applicationWillTerminate(_ notification: Notification) {
@@ -154,6 +167,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return supportDir.appendingPathComponent("prompt.sock").path
     }
 
+    /// Ctrl+Shift+C 触发。第一次按弹菜单(performClick 等同鼠标点🐙图标),
+    /// 第二次按关菜单(cancelTracking 是 NSMenu 程序化关闭 API)。menuIsShowing
+    /// 由 NSMenuDelegate 维护,所以两次按下之间用户用鼠标关掉菜单也不会卡住。
+    private func toggleStatusMenu() {
+        if menuIsShowing {
+            statusItem?.menu?.cancelTracking()
+        } else {
+            statusItem?.button?.performClick(nil)
+        }
+    }
+
+    func menuWillOpen(_ menu: NSMenu) { menuIsShowing = true }
+    func menuDidClose(_ menu: NSMenu) { menuIsShowing = false }
+
     private func refreshIcon() {
         statusItem?.button?.image = StatusIcon.image(
             for: store.aggregateStatus,
@@ -164,6 +191,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func rebuildMenu(with sessions: [Session], lifetime: [ModelLifetimeUsage], window: RollingWindow?) {
         let menu = NSMenu()
+        // 每次重建都要重新挂 delegate ── menuIsShowing 状态机依赖它。
+        menu.delegate = self
 
         let header = NSMenuItem(
             title: "Claude Code · \(sessions.count) 个会话",
