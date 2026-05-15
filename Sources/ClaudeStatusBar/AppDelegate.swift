@@ -68,7 +68,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 let transitioned = self.detector.detect(in: sessions)
                 let completed = self.completionDetector.detect(in: sessions)
                 guard self.settings.notificationsEnabled else { return }
-                for s in transitioned { self.notifier.notify(session: s) }
+                // 浮窗已经在该会话上承担了"等待响应"的告知,系统通知就别再叠一层。
+                let withPanel = self.permissionStore.pendingSessionIds()
+                for s in transitioned where !withPanel.contains(s.sessionId) {
+                    self.notifier.notify(session: s)
+                }
                 for s in completed { self.notifier.notifyCompletion(session: s) }
             }
             .store(in: &cancellables)
@@ -105,7 +109,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             guard let self else { return }
             let due = self.reminderTracker.tick(sessions: self.store.sessions, now: Date())
             guard self.settings.notificationsEnabled else { return }
-            for s in due { self.notifier.notify(session: s) }
+            let withPanel = self.permissionStore.pendingSessionIds()
+            for s in due where !withPanel.contains(s.sessionId) {
+                self.notifier.notify(session: s)
+            }
         }
         t.resume()
         reminderTimer = t

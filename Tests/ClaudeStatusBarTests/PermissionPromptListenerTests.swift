@@ -86,6 +86,41 @@ final class PermissionPromptListenerTests: XCTestCase {
         clientA.close(); clientB.close()
     }
 
+    func testHelperDisconnectAutoResolvesAndDismisses() throws {
+        // Simulates the CLI killing the hook subprocess because the user
+        // answered y/n in the terminal first. The listener should notice the
+        // socket EOF and resolve the entry as deny so the panel dismisses.
+        let path = tempSocketPath()
+        let store = PermissionPromptStore(timeout: 1000, scheduler: { _, _ in {} })
+        let listener = PermissionPromptListener(store: store, socketPath: path)
+        try listener.start()
+        defer { listener.stop() }
+
+        let arrived = expectation(description: "store received request")
+        let resolvedEx = expectation(description: "resolved fired")
+        let incomingSub = store.incoming.sink { _ in arrived.fulfill() }
+        let resolvedSub = store.resolved.sink { _ in resolvedEx.fulfill() }
+        defer { incomingSub.cancel(); resolvedSub.cancel() }
+
+        let client = try TestUnixClient(path: path)
+        let request = PermissionPromptRequest(
+            id: "term-wins", toolName: "Bash",
+            input: ["command": .string("ls")]
+        )
+        var payload = try JSONEncoder().encode(request)
+        payload.append(0x0A)
+        try client.writeAll(payload)
+
+        wait(for: [arrived], timeout: 2.0)
+        XCTAssertEqual(store.pendingIds, ["term-wins"])
+
+        // CLI killed us — slam the socket shut from the helper side.
+        client.close()
+
+        wait(for: [resolvedEx], timeout: 2.0)
+        XCTAssertEqual(store.pendingIds, [], "EOF on the helper socket should resolve the pending entry")
+    }
+
     func testMalformedJsonDropsConnection() throws {
         let path = tempSocketPath()
         let store = PermissionPromptStore(timeout: 1000, scheduler: { _, _ in {} })

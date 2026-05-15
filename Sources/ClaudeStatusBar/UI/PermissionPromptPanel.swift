@@ -63,6 +63,7 @@ final class PermissionPromptPanel: NSPanel, NSWindowDelegate {
 
     @objc private func allow() { onResponse(.allow) }
     @objc private func deny() { onResponse(.deny) }
+    @objc private func allowAlways() { onResponse(.allowAlways) }
 
     // MARK: - Layout
 
@@ -160,20 +161,25 @@ final class PermissionPromptPanel: NSPanel, NSWindowDelegate {
         denyButton.bezelStyle = .rounded
         denyButton.keyEquivalent = "\u{1B}"  // Esc
 
+        let allowAlwaysButton = NSButton(title: "一直允许", target: self, action: #selector(allowAlways))
+        allowAlwaysButton.bezelStyle = .rounded
+        // 不设 keyEquivalent:回车留给「允许」(单次),Tab 才能走到这里。
+
         let allowButton = NSButton(title: "允许", target: self, action: #selector(allow))
         allowButton.bezelStyle = .rounded
         allowButton.keyEquivalent = "\r"  // Return — gets the default-button blue highlight
         self.allowButton = allowButton
 
-        // Tab cycle: deny → allow → deny. AppKit walks nextKeyView on Tab.
-        denyButton.nextKeyView = allowButton
+        // Tab cycle: deny → allowAlways → allow → deny. AppKit walks nextKeyView on Tab.
+        denyButton.nextKeyView = allowAlwaysButton
+        allowAlwaysButton.nextKeyView = allowButton
         allowButton.nextKeyView = denyButton
 
         let spacer = NSView()
         spacer.translatesAutoresizingMaskIntoConstraints = false
         spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
 
-        let row = NSStackView(views: [spacer, denyButton, allowButton])
+        let row = NSStackView(views: [spacer, denyButton, allowAlwaysButton, allowButton])
         row.orientation = .horizontal
         row.spacing = 8
         row.distribution = .fill

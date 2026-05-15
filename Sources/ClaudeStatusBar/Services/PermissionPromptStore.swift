@@ -39,6 +39,15 @@ public final class PermissionPromptStore {
         return Array(entries.keys).sorted()
     }
 
+    /// CLI sessionIds for every in-flight prompt. Used by `AppDelegate` to
+    /// suppress the system "等待响应" notification while the panel is owning
+    /// that session — otherwise the user gets both a banner and the panel for
+    /// the same event.
+    public func pendingSessionIds() -> Set<String> {
+        lock.lock(); defer { lock.unlock() }
+        return Set(entries.values.compactMap { $0.request.sessionId })
+    }
+
     public func add(_ request: PermissionPromptRequest, reply: @escaping Reply) {
         let cancel = scheduler(timeout) { [weak self] in
             self?.fireTimeout(id: request.id)
@@ -67,6 +76,19 @@ public final class PermissionPromptStore {
         guard let entry else { return }
         entry.cancelTimeout()
         entry.reply(.allow(id: id, input: entry.request.input))
+        resolved.send(id)
+    }
+
+    /// Convenience: allow + tell the helper to add a session-scoped permission
+    /// rule for this exact tool/input. The helper rewrites this into a
+    /// `decision: {behavior: "allow", updatedPermissions: [...]}` envelope.
+    public func resolveAllowAlways(id: String) {
+        lock.lock()
+        let entry = entries.removeValue(forKey: id)
+        lock.unlock()
+        guard let entry else { return }
+        entry.cancelTimeout()
+        entry.reply(.allowAlways(id: id, input: entry.request.input))
         resolved.send(id)
     }
 

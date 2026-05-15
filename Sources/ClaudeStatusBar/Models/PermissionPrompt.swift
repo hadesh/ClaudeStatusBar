@@ -68,7 +68,13 @@ public struct PermissionPromptRequest: Codable, Equatable {
 
 /// App → helper: the user's decision (or auto-deny on timeout).
 public struct PermissionPromptDecision: Codable, Equatable {
-    public enum Behavior: String, Codable { case allow, deny }
+    public enum Behavior: String, Codable {
+        case allow
+        case deny
+        /// 允许并要求 helper 在输出里附带一条 session-scoped 的 addRules,本次会话内
+        /// 后续相同调用直接放行。最终 CLI 看到的 `decision.behavior` 仍是 "allow"。
+        case allowAlways = "allow_always"
+    }
     public let id: String
     public let behavior: Behavior
     public let updatedInput: [String: JSONValue]?
@@ -83,6 +89,10 @@ public struct PermissionPromptDecision: Codable, Equatable {
 
     public static func allow(id: String, input: [String: JSONValue]) -> Self {
         .init(id: id, behavior: .allow, updatedInput: input, message: nil)
+    }
+
+    public static func allowAlways(id: String, input: [String: JSONValue]) -> Self {
+        .init(id: id, behavior: .allowAlways, updatedInput: input, message: nil)
     }
 
     public static func deny(id: String, message: String) -> Self {

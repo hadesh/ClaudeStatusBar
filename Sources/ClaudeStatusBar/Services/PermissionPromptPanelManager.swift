@@ -69,6 +69,8 @@ final class PermissionPromptPanelManager {
         switch behavior {
         case .allow:
             store.resolveAllow(id: id)
+        case .allowAlways:
+            store.resolveAllowAlways(id: id)
         case .deny:
             store.resolveDeny(id: id, message: "User denied via status bar")
         }

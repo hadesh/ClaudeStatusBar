@@ -77,6 +77,12 @@ public final class PermissionPromptListener {
                 if stopped { return }
                 continue
             }
+            // Without SO_NOSIGPIPE, writing to a socket whose peer has gone
+            // away (helper killed by CLI when terminal won) raises SIGPIPE
+            // and tears down the whole app. We always check write's return
+            // value, so suppress the signal and let EPIPE surface as an error.
+            var on: Int32 = 1
+            setsockopt(client, SOL_SOCKET, SO_NOSIGPIPE, &on, socklen_t(MemoryLayout<Int32>.size))
             workQueue.async { [weak self] in
                 self?.handle(clientFd: client)
             }
@@ -95,6 +101,27 @@ public final class PermissionPromptListener {
             captured = decision
             semaphore.signal()
         }
+
+        // Watch for the helper going away. When the CLI's terminal prompt wins
+        // the race, it kills the hook subprocess; the kernel then closes our
+        // end of the socket and `read` returns 0. Resolve as deny so the
+        // panel dismisses (via store.resolved) and our semaphore unblocks.
+        // Resolving a request that the panel has already settled is a no-op
+        // thanks to the store's lock.
+        let watcher = DispatchSource.makeReadSource(fileDescriptor: clientFd, queue: workQueue)
+        let store = self.store
+        let requestId = request.id
+        watcher.setEventHandler {
+            var byte: UInt8 = 0
+            let n = read(clientFd, &byte, 1)
+            if n <= 0 {
+                store.resolveDeny(id: requestId, message: "Settled by terminal prompt")
+            }
+            // Any spurious data from the helper (shouldn't happen) is dropped.
+        }
+        watcher.resume()
+        defer { watcher.cancel() }
+
         semaphore.wait()
 
         guard let decision = captured,

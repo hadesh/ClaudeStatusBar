@@ -36,12 +36,20 @@ public enum HookProcessor {
         else { return nil }
 
         response.removeValue(forKey: "id")
-        let behavior = (response["behavior"] as? String) == "allow" ? "allow" : "deny"
+        let raw = response["behavior"] as? String ?? ""
+        let allowOnce = raw == "allow"
+        let allowAlways = raw == "allow_always"
+        let isAllow = allowOnce || allowAlways
 
-        var decision: [String: Any] = ["behavior": behavior]
-        if behavior == "allow" {
+        var decision: [String: Any] = ["behavior": isAllow ? "allow" : "deny"]
+        if isAllow {
             if let updated = response["updatedInput"] as? [String: Any] {
                 decision["updatedInput"] = updated
+            }
+            if allowAlways {
+                decision["updatedPermissions"] = sessionAllowRule(
+                    toolName: toolName, toolInput: toolInput
+                )
             }
         } else {
             decision["message"] = (response["message"] as? String) ?? "Denied via status bar"
@@ -54,5 +62,24 @@ public enum HookProcessor {
             ]
         ]
         return try? JSONSerialization.data(withJSONObject: output)
+    }
+
+    /// Builds a session-scoped `updatedPermissions` payload that allow-lists
+    /// the current tool invocation for the rest of this CLI session. For Bash
+    /// we pin to the exact command string (Claude Code's matcher takes the
+    /// command as ruleContent). For other tools we omit ruleContent — meaning
+    /// "any input for this tool, just for this session" — because each tool
+    /// has its own ruleContent grammar and we don't want to silently mis-match.
+    private static func sessionAllowRule(toolName: String, toolInput: [String: Any]) -> [[String: Any]] {
+        var rule: [String: Any] = ["toolName": toolName]
+        if toolName == "Bash", let command = toolInput["command"] as? String, !command.isEmpty {
+            rule["ruleContent"] = command
+        }
+        return [[
+            "type": "addRules",
+            "behavior": "allow",
+            "destination": "session",
+            "rules": [rule],
+        ]]
     }
 }

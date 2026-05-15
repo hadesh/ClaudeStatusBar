@@ -162,6 +162,45 @@ final class PermissionPromptStoreTests: XCTestCase {
         XCTAssertEqual(seen, [])
     }
 
+    func testResolveAllowAlwaysEchoesInputAndUsesAllowAlwaysBehavior() {
+        let store = PermissionPromptStore(timeout: 1000, scheduler: noopScheduler)
+        var captured: PermissionPromptDecision?
+        let req = PermissionPromptRequest(
+            id: "a", toolName: "Bash",
+            input: ["command": .string("ls -la")]
+        )
+        store.add(req) { captured = $0 }
+        store.resolveAllowAlways(id: "a")
+        XCTAssertEqual(captured?.behavior, .allowAlways)
+        XCTAssertEqual(captured?.updatedInput?["command"], .string("ls -la"))
+        XCTAssertEqual(store.pendingIds, [])
+    }
+
+    func testResolveAllowAlwaysFiresResolvedSignal() {
+        let store = PermissionPromptStore(timeout: 1000, scheduler: noopScheduler)
+        var seen: [String] = []
+        let sub = store.resolved.sink { seen.append($0) }
+        defer { sub.cancel() }
+        store.add(makeRequest(id: "a")) { _ in }
+        store.resolveAllowAlways(id: "a")
+        XCTAssertEqual(seen, ["a"])
+    }
+
+    func testPendingSessionIdsTracksLiveRequests() {
+        let store = PermissionPromptStore(timeout: 1000, scheduler: noopScheduler)
+        let r1 = PermissionPromptRequest(id: "a", toolName: "Bash", input: [:], cwd: nil, sessionId: "sess-1")
+        let r2 = PermissionPromptRequest(id: "b", toolName: "Bash", input: [:], cwd: nil, sessionId: "sess-2")
+        let r3 = PermissionPromptRequest(id: "c", toolName: "Bash", input: [:], cwd: nil, sessionId: nil)
+        store.add(r1) { _ in }
+        store.add(r2) { _ in }
+        store.add(r3) { _ in }
+        XCTAssertEqual(store.pendingSessionIds(), ["sess-1", "sess-2"])
+        store.resolveAllow(id: "a")
+        XCTAssertEqual(store.pendingSessionIds(), ["sess-2"])
+        store.resolveDeny(id: "b", message: "no")
+        XCTAssertEqual(store.pendingSessionIds(), [])
+    }
+
     func testConcurrentAddsKeepIndependentState() {
         let store = PermissionPromptStore(timeout: 1000, scheduler: noopScheduler)
         var seenA: PermissionPromptDecision?

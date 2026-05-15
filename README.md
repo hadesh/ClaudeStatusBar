@@ -7,7 +7,7 @@
 - **会话总览**：当前所有 CLI 会话（pid、cwd、状态），按项目目录展示。
 - **状态指示**：菜单栏图标在 _idle / working / waiting_ 三种状态下变色（黑/橙/黄）。
 - **等待提醒**：任意会话进入 `waiting`（CLI 弹了确认对话框）时立刻发送系统通知，省得切回 Terminal 才发现。
-- **状态栏授权**：右上角弹一个浮动小面板，带 **允许 / 拒绝** 按钮（Return / Esc 也可），单击直接回应 CLI 的权限请求，不用切回 Terminal。注册一次 `PermissionRequest` hook 即可，对 vanilla `claude` 直接生效；详见 [docs/permission-prompt.md](docs/permission-prompt.md)。
+- **状态栏授权**：右上角弹一个浮动小面板，带 **允许 / 一直允许 / 拒绝** 按钮（Return / Esc 也可），单击直接回应 CLI 的权限请求，不用切回 Terminal。「一直允许」把规则加进**本会话**临时白名单（不污染 `settings.json`）。在终端直接按 y/n 也行，面板会自动消失。注册一次 `PermissionRequest` hook 即可，对 vanilla `claude` 直接生效；详见 [docs/permission-prompt.md](docs/permission-prompt.md)。
 - **上下文用量**：每条会话显示当前模型 + 上下文窗口占用百分比（读 `~/.claude/projects/.../*.jsonl` 最近一条 assistant 消息）。
 - **累计用量**：菜单底部按模型聚合 token 总量与占比（实时扫描 `~/.claude/projects/`，不依赖 stats 缓存）。
 

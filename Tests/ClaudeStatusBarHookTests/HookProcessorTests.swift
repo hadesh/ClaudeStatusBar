@@ -118,4 +118,60 @@ final class HookProcessorTests: XCTestCase {
         )
         XCTAssertEqual(decision["behavior"] as? String, "deny")
     }
+
+    func testAllowAlwaysFlattensToAllowPlusSessionRuleForBash() throws {
+        let output = HookProcessor.process(input: Self.validInput) { _ in
+            Data(#"{"id":"x","behavior":"allow_always","updatedInput":{"command":"ls -la"}}"#.utf8)
+        }
+        let decision = try XCTUnwrap(
+            (try XCTUnwrap(
+                JSONSerialization.jsonObject(with: output!) as? [String: Any]
+            )["hookSpecificOutput"] as? [String: Any])?["decision"] as? [String: Any]
+        )
+        // CLI sees plain "allow" — the "always" intent rides in updatedPermissions.
+        XCTAssertEqual(decision["behavior"] as? String, "allow")
+        XCTAssertNil(decision["message"])
+        let updates = try XCTUnwrap(decision["updatedPermissions"] as? [[String: Any]])
+        XCTAssertEqual(updates.count, 1)
+        let entry = updates[0]
+        XCTAssertEqual(entry["type"] as? String, "addRules")
+        XCTAssertEqual(entry["behavior"] as? String, "allow")
+        XCTAssertEqual(entry["destination"] as? String, "session")
+        let rules = try XCTUnwrap(entry["rules"] as? [[String: Any]])
+        XCTAssertEqual(rules.count, 1)
+        XCTAssertEqual(rules[0]["toolName"] as? String, "Bash")
+        XCTAssertEqual(rules[0]["ruleContent"] as? String, "ls -la",
+                       "Bash should pin to the exact command for 'always allow'")
+    }
+
+    func testAllowAlwaysOmitsRuleContentForNonBashTools() throws {
+        let stdin = Data(#"{"tool_name":"Read","tool_input":{"file_path":"/tmp/foo"}}"#.utf8)
+        let output = HookProcessor.process(input: stdin) { _ in
+            Data(#"{"behavior":"allow_always"}"#.utf8)
+        }
+        let decision = try XCTUnwrap(
+            (try XCTUnwrap(
+                JSONSerialization.jsonObject(with: output!) as? [String: Any]
+            )["hookSpecificOutput"] as? [String: Any])?["decision"] as? [String: Any]
+        )
+        XCTAssertEqual(decision["behavior"] as? String, "allow")
+        let rules = try XCTUnwrap(
+            ((decision["updatedPermissions"] as? [[String: Any]])?.first)?["rules"] as? [[String: Any]]
+        )
+        XCTAssertEqual(rules[0]["toolName"] as? String, "Read")
+        XCTAssertNil(rules[0]["ruleContent"],
+                     "non-Bash tools have per-tool ruleContent grammars; we don't guess")
+    }
+
+    func testPlainAllowDoesNotEmitUpdatedPermissions() throws {
+        let output = HookProcessor.process(input: Self.validInput) { _ in
+            Data(#"{"behavior":"allow"}"#.utf8)
+        }
+        let decision = try XCTUnwrap(
+            (try XCTUnwrap(
+                JSONSerialization.jsonObject(with: output!) as? [String: Any]
+            )["hookSpecificOutput"] as? [String: Any])?["decision"] as? [String: Any]
+        )
+        XCTAssertNil(decision["updatedPermissions"])
+    }
 }

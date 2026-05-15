@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.6.1 — 2026-05-15
+
+授权面板的三处修复。
+
+### 新增
+
+- **「一直允许」按钮**：浮窗按钮变成 **拒绝 / 一直允许 / 允许** 三个。「一直允许」把规则加进当前 CLI 会话的临时白名单(scope = `session`),退出 `claude` 即失效,不会写到 `~/.claude/settings.json`。Bash 按命令字符串精确匹配;其他工具是 tool-wide-for-this-session(每种工具的 `ruleContent` 语法不同,helper 不去猜)。Tab 顺序: 拒绝 → 一直允许 → 允许。无全局热键,在面板里点。
+
+### 修复
+
+- **重复通知**:浮窗弹出的同时还会收到「Claude Code 等待响应」系统通知 banner —— 现在 `AppDelegate` 通过 `PermissionPromptStore.pendingSessionIds()` 过滤掉这些会话,transition 通知和 5s 周期的二次提醒都跳过。完成通知(busy → idle)不在此列。
+- **终端先动作时浮窗不消失**:`PermissionPromptListener` 现在用 `DispatchSource.makeReadSource` 监听已 accept 的客户端 fd 的 EOF。CLI 因为终端赢 race 杀掉 hook 子进程时,EOF 会触发 `store.resolveDeny` → `store.resolved` 信号 → 面板消失。
+- **SIGPIPE 闪退**:在已 accept 的 socket 上 set `SO_NOSIGPIPE`。否则在 helper 已断开后写回响应(终端先动 / 5min 超时后 panel 才点)会被 EPIPE → SIGPIPE 整个 app 拉死。这是 0.6.0 起就潜伏的 bug,只是上面这条修好之后才会有 reliable 重现。
+
+### Wire 协议
+
+- `PermissionPromptDecision.Behavior` 新增 `allowAlways`(rawValue `"allow_always"`)。app → helper 的 wire 形态多一种;helper → CLI 的 envelope 仍然是 `behavior: "allow"`,「always」语义放进新增的 `updatedPermissions: [{type:"addRules", behavior:"allow", destination:"session", rules:[{toolName, ruleContent?}]}]` 字段。
+
+---
+
 ## 0.6.0 — 2026-05-14
 
 新功能：状态栏权限审批面板。
