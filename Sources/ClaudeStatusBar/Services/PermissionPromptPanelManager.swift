@@ -20,9 +20,10 @@ final class PermissionPromptPanelManager {
     private var allowHotkey: GlobalHotkey?
     private var denyHotkey: GlobalHotkey?
 
-    /// 这些工具的 PermissionRequest 不弹浮窗 —— `AskUserQuestion` 是结构化的
-    /// 多选题,在浮窗按 allow/deny 没意义;主 app 改成发系统通知提醒用户去
-    /// 终端答。AppDelegate 会在同一个 incoming 流上单独路由这部分。
+    /// 这些工具不走常规 allow/deny 浮窗 —— `AskUserQuestion` 是结构化的多选题,
+    /// 「允许 / 拒绝」按钮没语义。`AskUserQuestionPanelManager` 在同一条
+    /// `store.incoming` 上单独订阅,给这些请求弹专属浮窗(只展示 + 跳回终端,
+    /// 本期不代答)。本管理器对它们直接 early-return。
     static let toolsRoutedAwayFromPanel: Set<String> = ["AskUserQuestion"]
 
     init(store: PermissionPromptStore) {
