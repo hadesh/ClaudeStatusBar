@@ -192,6 +192,29 @@ final class RecentConversationsReaderTests: XCTestCase {
         XCTAssertEqual(result.map { $0.sessionId }, ["keep"])
     }
 
+    func testReadSubdirectoryPicksNewestJsonl() throws {
+        let tmp = makeTempProjectsRoot()
+        defer { cleanup(tmp) }
+        let projectDir = tmp.appendingPathComponent(
+            SessionDetailsReader.encodeProjectPath("/proj")
+        )
+        try FileManager.default.createDirectory(at: projectDir, withIntermediateDirectories: true)
+        // 同一个 sessionId 子目录里两个 jsonl, mtime-newest 那个的 firstPrompt 应当被取出.
+        try writeSubdirJsonl(in: projectDir, sessionId: "sess", filename: "old.jsonl",
+                             firstPrompt: "old prompt",
+                             mtime: Date(timeIntervalSinceNow: -3600))
+        try writeSubdirJsonl(in: projectDir, sessionId: "sess", filename: "new.jsonl",
+                             firstPrompt: "new prompt",
+                             mtime: Date(timeIntervalSinceNow: -60))
+
+        let result = RecentConversationsReader.read(
+            cwd: "/proj", excluding: nil, projectsRoot: tmp
+        )
+        XCTAssertEqual(result.count, 1)
+        XCTAssertEqual(result[0].sessionId, "sess")
+        XCTAssertEqual(result[0].firstPrompt, "new prompt")
+    }
+
     // MARK: - test fixtures
 
     private func makeTempProjectsRoot() -> URL {
