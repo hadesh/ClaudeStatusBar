@@ -48,7 +48,7 @@ final class SessionRowViewTests: XCTestCase {
         XCTAssertNotNil(view.terminateButton)
     }
 
-    func testHoverShowsAndHidesTerminateButton() {
+    func testSetHighlightedShowsAndHidesTerminateButton() {
         let s = makeSession(status: .busy)
         let view = SessionRowView(
             session: s,
@@ -58,11 +58,11 @@ final class SessionRowViewTests: XCTestCase {
         )
         XCTAssertTrue(view.terminateButton!.isHidden, "初始隐藏")
 
-        view.handleHoverChanged(isHovering: true)
-        XCTAssertFalse(view.terminateButton!.isHidden, "hover 进入后显示")
+        view.setHighlighted(true)
+        XCTAssertFalse(view.terminateButton!.isHidden, "高亮后显示")
 
-        view.handleHoverChanged(isHovering: false)
-        XCTAssertTrue(view.terminateButton!.isHidden, "hover 离开后再隐藏")
+        view.setHighlighted(false)
+        XCTAssertTrue(view.terminateButton!.isHidden, "去高亮后再隐藏")
     }
 
     func testTerminateClickInvokesCallbackWithPid() {

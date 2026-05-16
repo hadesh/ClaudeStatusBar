@@ -3,11 +3,12 @@ import Cocoa
 /// 状态栏菜单里单个 session 主行的自定义 view。每次 `rebuildMenu` 都会
 /// 新构造一批,旧的随 NSMenu 释放 —— 不在 view 里维护跨 menu 的状态。
 ///
-/// hover 行为:鼠标 enter → 终止按钮 isHidden = false;exit → 隐藏。
-/// 跟 `enclosingMenuItem.isHighlighted` 解耦,因为键盘上下选时高亮跟着移
-/// 但鼠标其实在别处,这种情况按钮不该出现。
-///
-/// 高亮态背景由本 view 自己画 —— `NSMenuItem.view` 不会自动跟随选中色。
+/// **高亮 / hover 信号靠 NSMenuDelegate.menu(_:willHighlight:) 驱动**,不是
+/// NSTrackingArea。原因:菜单 tracking 模式下 NSMenu 接管所有鼠标事件,
+/// 不会向 NSMenuItem.view 的 subviews 派发 mouseEntered/Exited;同样地
+/// `enclosingMenuItem.isHighlighted` 状态变化也不会触发 view redraw。
+/// AppDelegate 拿到 willHighlight 回调后调用 `setHighlighted(_:)`,本 view
+/// 据此决定按钮显隐和背景色。鼠标 hover 和键盘 ↑↓ 共用此信号。
 final class SessionRowView: NSView {
 
     private let session: Session
@@ -21,6 +22,9 @@ final class SessionRowView: NSView {
 
     private var mainLabel: NSTextField!
     private var secondaryLabel: NSTextField?
+
+    /// 当前是否处于「菜单选中态」。由 AppDelegate 通过 setHighlighted(_:) 推过来。
+    private var isHighlightedByMenu: Bool = false
 
     init(
         session: Session,
@@ -138,32 +142,15 @@ final class SessionRowView: NSView {
         onTerminate(session.pid)
     }
 
-    // MARK: - hover 跟踪
+    // MARK: - 高亮态由 AppDelegate.menu(_:willHighlight:) 推送
 
-    /// 抽出来给单测调用 —— 真 NSEvent 构造比较繁琐,而 NSResponder 的
-    /// mouseEntered/mouseExited 本身就只是把事件转给这里。
-    func handleHoverChanged(isHovering: Bool) {
-        terminateButton?.isHidden = !isHovering
-    }
-
-    override func updateTrackingAreas() {
-        super.updateTrackingAreas()
-        trackingAreas.forEach { removeTrackingArea($0) }
-        let area = NSTrackingArea(
-            rect: .zero,
-            options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect],
-            owner: self,
-            userInfo: nil
-        )
-        addTrackingArea(area)
-    }
-
-    override func mouseEntered(with event: NSEvent) {
-        handleHoverChanged(isHovering: true)
-    }
-
-    override func mouseExited(with event: NSEvent) {
-        handleHoverChanged(isHovering: false)
+    /// 唯一的高亮入口。由 AppDelegate 在 NSMenuDelegate 回调里调用。
+    /// on=true:终止按钮显示 + 背景反色;on=false:还原。
+    func setHighlighted(_ on: Bool) {
+        guard isHighlightedByMenu != on else { return }
+        isHighlightedByMenu = on
+        terminateButton?.isHidden = !on
+        needsDisplay = true
     }
 
     // MARK: - 主行点击
@@ -182,7 +169,7 @@ final class SessionRowView: NSView {
     // MARK: - 高亮态背景
 
     override func draw(_ dirtyRect: NSRect) {
-        if enclosingMenuItem?.isHighlighted == true {
+        if isHighlightedByMenu {
             NSColor.selectedMenuItemColor.setFill()
             bounds.fill()
             mainLabel.textColor = .selectedMenuItemTextColor

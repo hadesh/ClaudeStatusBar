@@ -207,6 +207,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     func menuWillOpen(_ menu: NSMenu) { menuIsShowing = true }
     func menuDidClose(_ menu: NSMenu) { menuIsShowing = false }
 
+    /// 唯一可靠的「哪一项被选中」信号 —— 鼠标 hover 与键盘 ↑↓ 都会触发。
+    /// SessionRowView 的 NSTrackingArea 在菜单 tracking 模式下不被派发,
+    /// 所以靠这条 delegate 回调推送高亮态。
+    func menu(_ menu: NSMenu, willHighlight item: NSMenuItem?) {
+        for menuItem in menu.items {
+            guard let row = menuItem.view as? SessionRowView else { continue }
+            row.setHighlighted(menuItem === item)
+        }
+    }
+
     private func refreshIcon() {
         iconAnimator?.update(
             status: store.aggregateStatus,
