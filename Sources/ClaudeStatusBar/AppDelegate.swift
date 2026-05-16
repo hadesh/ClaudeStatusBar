@@ -360,42 +360,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     private func makeSessionItem(_ s: Session) -> NSMenuItem {
-        let badge: String
-        switch s.status {
-        case .idle: badge = "○"
-        case .busy: badge = "●"
-        case .waiting: badge = "⚠"
-        }
-        let name = (s.cwd as NSString).lastPathComponent
-        let mainTitle = "\(badge) \(name) · pid \(s.pid)"
-        let secondary = secondaryLine(for: s)
-
-        let attr = NSMutableAttributedString(
-            string: mainTitle,
-            attributes: [
-                .font: NSFont.menuFont(ofSize: 0),
-                .foregroundColor: NSColor.labelColor,
-            ]
-        )
-        if let secondary {
-            attr.append(NSAttributedString(string: "\n"))
-            let para = NSMutableParagraphStyle()
-            para.lineBreakMode = .byTruncatingTail
-            attr.append(NSAttributedString(
-                string: secondary,
-                attributes: [
-                    .font: NSFont.systemFont(ofSize: 11),
-                    .foregroundColor: NSColor.secondaryLabelColor,
-                    .paragraphStyle: para,
-                ]
-            ))
-        }
-
-        let item = NSMenuItem(title: "", action: #selector(revealSession(_:)), keyEquivalent: "")
-        item.attributedTitle = attr
-        item.target = self
-        item.representedObject = s
+        let item = NSMenuItem()
         item.toolTip = "\(s.cwd)\n按住 Option 点击在 Finder 中打开"
+
+        let view = SessionRowView(
+            session: s,
+            secondary: secondaryLine(for: s),
+            onTerminate: { [weak self] pid in
+                ProcessTerminator.sendInterrupt(pid: pid)
+                self?.statusItem?.menu?.cancelTracking()
+            },
+            onClick: { [weak self] in
+                self?.revealSession(forPid: s.pid)
+            }
+        )
+        item.view = view
         return item
     }
 
@@ -433,8 +412,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         return item
     }
 
-    @objc private func revealSession(_ sender: NSMenuItem) {
-        guard let session = sender.representedObject as? Session else { return }
+    /// SessionRowView 主行点击入口。沿用旧 revealSession 的全部语义:
+    /// Option 检测仍走 NSApp.currentEvent,与 sender 类型无关。
+    private func revealSession(forPid pid: Int) {
+        guard let session = store.sessions.first(where: { $0.pid == pid }) else { return }
         let optionHeld = NSApp.currentEvent?.modifierFlags.contains(.option) ?? false
         if optionHeld {
             openCwdInFinder(session.cwd)
