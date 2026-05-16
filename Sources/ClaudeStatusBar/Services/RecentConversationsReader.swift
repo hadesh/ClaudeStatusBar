@@ -27,6 +27,67 @@ public enum RecentConversationsReader {
         return nil
     }
 
+    /// 读 cwd 对应 projects 目录下的历史会话, 按 mtime 倒序返回前 limit 个有效项.
+    /// 扁平布局: `<projectDir>/<sessionId>.jsonl`.  子目录布局在后续 commit 加.
+    public static func read(
+        cwd: String,
+        excluding sessionId: String?,
+        limit: Int = defaultLimit,
+        projectsRoot: URL = SessionDetailsReader.defaultProjectsRoot
+    ) -> [RecentConversation] {
+        let projectDir = projectsRoot.appendingPathComponent(
+            SessionDetailsReader.encodeProjectPath(cwd)
+        )
+        let candidates = collectCandidates(in: projectDir, excluding: sessionId)
+        let sorted = candidates.sorted { $0.modifiedAt > $1.modifiedAt }
+        var result: [RecentConversation] = []
+        for c in sorted {
+            if result.count >= limit { break }
+            guard let prompt = parseFile(at: c.url) else { continue }
+            result.append(RecentConversation(
+                sessionId: c.sessionId,
+                firstPrompt: prompt,
+                modifiedAt: c.modifiedAt,
+                jsonlURL: c.url
+            ))
+        }
+        return result
+    }
+
+    // MARK: - private file walking
+
+    private struct Candidate {
+        let url: URL
+        let sessionId: String
+        let modifiedAt: Date
+    }
+
+    private static func collectCandidates(in projectDir: URL, excluding: String?) -> [Candidate] {
+        let fm = FileManager.default
+        guard let entries = try? fm.contentsOfDirectory(
+            at: projectDir,
+            includingPropertiesForKeys: [.contentModificationDateKey, .isDirectoryKey]
+        ) else { return [] }
+
+        var result: [Candidate] = []
+        for entry in entries {
+            // 子目录布局在下一个 commit 加, 这里只处理扁平 *.jsonl
+            guard entry.pathExtension == "jsonl" else { continue }
+            let stem = entry.deletingPathExtension().lastPathComponent
+            if let excluding, stem == excluding { continue }
+            guard let mt = (try? entry.resourceValues(forKeys: [.contentModificationDateKey]))?
+                    .contentModificationDate
+            else { continue }
+            result.append(Candidate(url: entry, sessionId: stem, modifiedAt: mt))
+        }
+        return result
+    }
+
+    private static func parseFile(at url: URL) -> String? {
+        guard let data = try? Data(contentsOf: url) else { return nil }
+        return parseFirstPrompt(data)
+    }
+
     // MARK: - Private helpers
 
     private static func truncate(_ s: String, max: Int) -> String {

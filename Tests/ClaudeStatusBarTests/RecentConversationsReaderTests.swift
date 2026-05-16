@@ -73,4 +73,106 @@ final class RecentConversationsReaderTests: XCTestCase {
         """#.data(using: .utf8)!
         XCTAssertNil(RecentConversationsReader.parseFirstPrompt(data))
     }
+
+    // MARK: - read (filesystem)
+
+    func testReadReturnsEmptyForMissingDirectory() {
+        let tmp = makeTempProjectsRoot()
+        defer { cleanup(tmp) }
+        let result = RecentConversationsReader.read(
+            cwd: "/some/cwd", excluding: nil, projectsRoot: tmp
+        )
+        XCTAssertEqual(result, [])
+    }
+
+    func testReadFlatLayoutSingleFile() throws {
+        let tmp = makeTempProjectsRoot()
+        defer { cleanup(tmp) }
+        let projectDir = tmp.appendingPathComponent(
+            SessionDetailsReader.encodeProjectPath("/proj")
+        )
+        try FileManager.default.createDirectory(at: projectDir, withIntermediateDirectories: true)
+        try writeFlatJsonl(in: projectDir, sessionId: "abc-123", firstPrompt: "the prompt")
+
+        let result = RecentConversationsReader.read(
+            cwd: "/proj", excluding: nil, projectsRoot: tmp
+        )
+        XCTAssertEqual(result.count, 1)
+        XCTAssertEqual(result[0].sessionId, "abc-123")
+        XCTAssertEqual(result[0].firstPrompt, "the prompt")
+        XCTAssertEqual(result[0].jsonlURL, projectDir.appendingPathComponent("abc-123.jsonl"))
+    }
+
+    func testReadSortsByMtimeDescending() throws {
+        let tmp = makeTempProjectsRoot()
+        defer { cleanup(tmp) }
+        let projectDir = tmp.appendingPathComponent(
+            SessionDetailsReader.encodeProjectPath("/proj")
+        )
+        try FileManager.default.createDirectory(at: projectDir, withIntermediateDirectories: true)
+        // 创建 3 个文件, mtime 依次为 -3h / -1h / -2h
+        try writeFlatJsonl(in: projectDir, sessionId: "old",   firstPrompt: "old",  mtime: Date(timeIntervalSinceNow: -10800))
+        try writeFlatJsonl(in: projectDir, sessionId: "newest", firstPrompt: "new", mtime: Date(timeIntervalSinceNow: -3600))
+        try writeFlatJsonl(in: projectDir, sessionId: "mid",   firstPrompt: "mid",  mtime: Date(timeIntervalSinceNow: -7200))
+
+        let result = RecentConversationsReader.read(
+            cwd: "/proj", excluding: nil, projectsRoot: tmp
+        )
+        XCTAssertEqual(result.map { $0.sessionId }, ["newest", "mid", "old"])
+    }
+
+    func testReadRespectsLimitParameter() throws {
+        let tmp = makeTempProjectsRoot()
+        defer { cleanup(tmp) }
+        let projectDir = tmp.appendingPathComponent(
+            SessionDetailsReader.encodeProjectPath("/proj")
+        )
+        try FileManager.default.createDirectory(at: projectDir, withIntermediateDirectories: true)
+        for i in 0..<7 {
+            try writeFlatJsonl(
+                in: projectDir,
+                sessionId: "s\(i)",
+                firstPrompt: "p\(i)",
+                mtime: Date(timeIntervalSinceNow: TimeInterval(-i * 60))
+            )
+        }
+        let result = RecentConversationsReader.read(
+            cwd: "/proj", excluding: nil, limit: 3, projectsRoot: tmp
+        )
+        XCTAssertEqual(result.count, 3)
+        XCTAssertEqual(result.map { $0.sessionId }, ["s0", "s1", "s2"])
+    }
+
+    // MARK: - test fixtures
+
+    private func makeTempProjectsRoot() -> URL {
+        let dir = NSTemporaryDirectory() + "rcr-test-\(UUID().uuidString)"
+        try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true, attributes: nil)
+        // C realpath resolves /var -> /private/var so URLs match FileManager.contentsOfDirectory output
+        guard let rp = realpath(dir, nil) else { return URL(fileURLWithPath: dir, isDirectory: true) }
+        defer { free(rp) }
+        return URL(fileURLWithPath: String(cString: rp), isDirectory: true)
+    }
+
+    private func cleanup(_ url: URL) {
+        try? FileManager.default.removeItem(at: url)
+    }
+
+    /// 写一个扁平布局的 jsonl: <projectDir>/<sessionId>.jsonl
+    private func writeFlatJsonl(
+        in projectDir: URL,
+        sessionId: String,
+        firstPrompt: String,
+        mtime: Date? = nil
+    ) throws {
+        let url = projectDir.appendingPathComponent("\(sessionId).jsonl")
+        let line = #"{"type":"user","message":{"role":"user","content":"\#(firstPrompt)"}}"#
+        try line.write(to: url, atomically: true, encoding: .utf8)
+        if let mtime {
+            try FileManager.default.setAttributes(
+                [.modificationDate: mtime],
+                ofItemAtPath: url.path
+            )
+        }
+    }
 }
