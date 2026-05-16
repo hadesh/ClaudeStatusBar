@@ -241,6 +241,78 @@ final class PermissionPromptStoreTests: XCTestCase {
         XCTAssertEqual(store.pendingSessionIds(), [])
     }
 
+    func testAbandonAllResolvesAllEntriesForSession() {
+        let store = PermissionPromptStore(timeout: 1000, scheduler: noopScheduler)
+        var seen: [String: PermissionPromptDecision?] = [:]
+        let r1 = PermissionPromptRequest(id: "a", toolName: "Bash", input: [:], cwd: nil, sessionId: "sess-1")
+        let r2 = PermissionPromptRequest(id: "b", toolName: "Read", input: [:], cwd: nil, sessionId: "sess-1")
+        store.add(r1) { seen["a"] = $0 }
+        store.add(r2) { seen["b"] = $0 }
+        store.abandonAll(sessionId: "sess-1")
+        XCTAssertEqual(seen.keys.sorted(), ["a", "b"])
+        XCTAssertNil(seen["a"]!, "abandonAll 必须用 nil reply,与 ✕ 等价")
+        XCTAssertNil(seen["b"]!)
+        XCTAssertEqual(store.pendingIds, [])
+    }
+
+    func testAbandonAllOnlyAffectsMatchingSessionId() {
+        let store = PermissionPromptStore(timeout: 1000, scheduler: noopScheduler)
+        var calls: Set<String> = []
+        let r1 = PermissionPromptRequest(id: "a", toolName: "Bash", input: [:], cwd: nil, sessionId: "sess-1")
+        let r2 = PermissionPromptRequest(id: "b", toolName: "Bash", input: [:], cwd: nil, sessionId: "sess-2")
+        store.add(r1) { _ in calls.insert("a") }
+        store.add(r2) { _ in calls.insert("b") }
+        store.abandonAll(sessionId: "sess-1")
+        XCTAssertEqual(calls, ["a"])
+        XCTAssertEqual(store.pendingIds, ["b"])
+    }
+
+    func testAbandonAllSkipsEntriesWithoutSessionId() {
+        let store = PermissionPromptStore(timeout: 1000, scheduler: noopScheduler)
+        var fired = false
+        let r = PermissionPromptRequest(id: "a", toolName: "Bash", input: [:], cwd: nil, sessionId: nil)
+        store.add(r) { _ in fired = true }
+        store.abandonAll(sessionId: "sess-1")
+        XCTAssertFalse(fired)
+        XCTAssertEqual(store.pendingIds, ["a"])
+    }
+
+    func testAbandonAllOnUnknownSessionIdIsNoOp() {
+        let store = PermissionPromptStore(timeout: 1000, scheduler: noopScheduler)
+        var seen: [String] = []
+        let sub = store.resolved.sink { seen.append($0) }
+        defer { sub.cancel() }
+        store.abandonAll(sessionId: "ghost")
+        XCTAssertEqual(seen, [])
+    }
+
+    func testAbandonAllFiresResolvedSignalForEachEntry() {
+        let store = PermissionPromptStore(timeout: 1000, scheduler: noopScheduler)
+        var seen: [String] = []
+        let sub = store.resolved.sink { seen.append($0) }
+        defer { sub.cancel() }
+        let r1 = PermissionPromptRequest(id: "a", toolName: "Bash", input: [:], cwd: nil, sessionId: "sess-1")
+        let r2 = PermissionPromptRequest(id: "b", toolName: "Read", input: [:], cwd: nil, sessionId: "sess-1")
+        store.add(r1) { _ in }
+        store.add(r2) { _ in }
+        store.abandonAll(sessionId: "sess-1")
+        XCTAssertEqual(seen.sorted(), ["a", "b"])
+    }
+
+    func testAbandonAllCancelsTimeouts() {
+        var cancelCalls = 0
+        let scheduler: PermissionPromptStore.Scheduler = { _, _ in
+            return { cancelCalls += 1 }
+        }
+        let store = PermissionPromptStore(timeout: 60, scheduler: scheduler)
+        let r1 = PermissionPromptRequest(id: "a", toolName: "Bash", input: [:], cwd: nil, sessionId: "sess-1")
+        let r2 = PermissionPromptRequest(id: "b", toolName: "Read", input: [:], cwd: nil, sessionId: "sess-1")
+        store.add(r1) { _ in }
+        store.add(r2) { _ in }
+        store.abandonAll(sessionId: "sess-1")
+        XCTAssertEqual(cancelCalls, 2)
+    }
+
     func testConcurrentAddsKeepIndependentState() {
         let store = PermissionPromptStore(timeout: 1000, scheduler: noopScheduler)
         var seenA: PermissionPromptDecision?

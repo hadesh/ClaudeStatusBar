@@ -115,6 +115,28 @@ public final class PermissionPromptStore {
         resolved.send(id)
     }
 
+    /// 把指定 sessionId 下所有 pending 条目都 abandon。语义同对每个浮窗点 ✕。
+    /// 用于 SessionStore 通过 session.status 离开 waiting 间接通知"用户已在
+    /// 终端答完"(CLI 不会主动杀 race-loser helper,helper 阻塞在 socket read,
+    /// 没有任何来自 socket 的 EOF 信号)。sessionId 为 nil 的条目无法关联,
+    /// 继续靠 5 分钟超时兜底。
+    public func abandonAll(sessionId: String) {
+        lock.lock()
+        var toResolve: [(id: String, entry: Pending)] = []
+        for (id, entry) in entries where entry.request.sessionId == sessionId {
+            toResolve.append((id, entry))
+        }
+        for (id, _) in toResolve {
+            entries.removeValue(forKey: id)
+        }
+        lock.unlock()
+        for (id, entry) in toResolve {
+            entry.cancelTimeout()
+            entry.reply(nil)
+            resolved.send(id)
+        }
+    }
+
     private func fireTimeout(id: String) {
         lock.lock()
         let entry = entries.removeValue(forKey: id)

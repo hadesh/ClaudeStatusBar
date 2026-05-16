@@ -28,6 +28,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     )
     private var detector = WaitingTransitionDetector()
     private var completionDetector = TaskCompletionDetector()
+    /// Bridge for "用户在终端答完 prompt → 关掉所有该 sessionId 的浮窗"。
+    /// hook helper 永远收不到 race-loser 信号(CLI 不杀它,stdin 已关),所以
+    /// 用 session.status 离开 waiting 当替代触发。
+    private var sessionExitDetector = PermissionPromptSessionExitDetector()
     private let settings: SettingsStore
     private let loginItem = LoginItemController()
     private var reminderTracker: WaitingReminderTracker
@@ -92,6 +96,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 self.contextStore.updateSessions(sessions)
                 let transitioned = self.detector.detect(in: sessions)
                 let completed = self.completionDetector.detect(in: sessions)
+                // sessionId 离开 waiting → 关掉对应浮窗。先于 notification 处理,
+                // 这样 abandonAll 触发的 resolved 能在同一 runloop 把面板移除。
+                for sid in self.sessionExitDetector.detect(in: sessions) {
+                    self.permissionStore.abandonAll(sessionId: sid)
+                }
                 guard self.settings.notificationsEnabled else { return }
                 // 浮窗已经在该会话上承担了"等待响应"的告知,系统通知就别再叠一层。
                 let withPanel = self.permissionStore.pendingSessionIds()
