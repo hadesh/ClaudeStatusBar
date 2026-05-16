@@ -3,12 +3,14 @@ import Cocoa
 /// 状态栏菜单里单个 session 主行的自定义 view。每次 `rebuildMenu` 都会
 /// 新构造一批,旧的随 NSMenu 释放 —— 不在 view 里维护跨 menu 的状态。
 ///
-/// **高亮 / hover 信号靠 NSMenuDelegate.menu(_:willHighlight:) 驱动**,不是
-/// NSTrackingArea。原因:菜单 tracking 模式下 NSMenu 接管所有鼠标事件,
-/// 不会向 NSMenuItem.view 的 subviews 派发 mouseEntered/Exited;同样地
-/// `enclosingMenuItem.isHighlighted` 状态变化也不会触发 view redraw。
-/// AppDelegate 拿到 willHighlight 回调后调用 `setHighlighted(_:)`,本 view
-/// 据此决定按钮显隐和背景色。鼠标 hover 和键盘 ↑↓ 共用此信号。
+/// **高亮信号双轨触发**:
+/// 1. NSMenuDelegate.menu(_:willHighlight:) ── 键盘 ↑↓ 选中
+/// 2. NSTrackingArea + mouseEntered/Exited ── 鼠标 hover
+/// 经验上 view-based NSMenuItem 在不同 macOS 版本里只有其中一条路径稳定
+/// 触发,两条都接成 setHighlighted(_:) 才能保证有反应。
+///
+/// 高亮可视化用 `wantsLayer + layer.backgroundColor`,不走 draw()。layer
+/// 修改是同步可见的,不依赖 redraw 时机,也不会被 NSTextField subview 遮挡。
 final class SessionRowView: NSView {
 
     private let session: Session
@@ -40,6 +42,7 @@ final class SessionRowView: NSView {
         let height: CGFloat = secondary != nil ? 38 : 24
         super.init(frame: NSRect(x: 0, y: 0, width: 280, height: height))
         autoresizingMask = [.width]
+        wantsLayer = true
 
         buildSubviews()
     }
@@ -142,15 +145,51 @@ final class SessionRowView: NSView {
         onTerminate(session.pid)
     }
 
-    // MARK: - 高亮态由 AppDelegate.menu(_:willHighlight:) 推送
+    // MARK: - 高亮态(menu delegate + tracking area 双轨触发)
 
-    /// 唯一的高亮入口。由 AppDelegate 在 NSMenuDelegate 回调里调用。
-    /// on=true:终止按钮显示 + 背景反色;on=false:还原。
+    /// 双轨入口:AppDelegate.menu(_:willHighlight:) 和本 view 的 mouseEntered/
+    /// Exited 都会调过来。第二次同值调用提前 return。
     func setHighlighted(_ on: Bool) {
         guard isHighlightedByMenu != on else { return }
         isHighlightedByMenu = on
+        layer?.backgroundColor = on
+            ? NSColor.selectedContentBackgroundColor.cgColor
+            : NSColor.clear.cgColor
+        mainLabel.textColor = on ? .selectedMenuItemTextColor : .labelColor
+        secondaryLabel?.textColor = on
+            ? .selectedMenuItemTextColor
+            : .secondaryLabelColor
         terminateButton?.isHidden = !on
-        needsDisplay = true
+    }
+
+    // MARK: - 鼠标 hover
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        trackingAreas.forEach { removeTrackingArea($0) }
+        let area = NSTrackingArea(
+            rect: bounds,
+            options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect],
+            owner: self,
+            userInfo: nil
+        )
+        addTrackingArea(area)
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        // 菜单弹出时 view 才被加到 NSCarbonMenuWindow,trackingArea 必须在这
+        // 之后重新装一次,首次 updateTrackingAreas 在 view 还没有 window 时
+        // 调用过一次但没意义。
+        updateTrackingAreas()
+    }
+
+    override func mouseEntered(with event: NSEvent) {
+        setHighlighted(true)
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        setHighlighted(false)
     }
 
     // MARK: - 主行点击
@@ -164,20 +203,5 @@ final class SessionRowView: NSView {
         }
         onClick()
         enclosingMenuItem?.menu?.cancelTracking()
-    }
-
-    // MARK: - 高亮态背景
-
-    override func draw(_ dirtyRect: NSRect) {
-        if isHighlightedByMenu {
-            NSColor.selectedMenuItemColor.setFill()
-            bounds.fill()
-            mainLabel.textColor = .selectedMenuItemTextColor
-            secondaryLabel?.textColor = .selectedMenuItemTextColor
-        } else {
-            mainLabel.textColor = .labelColor
-            secondaryLabel?.textColor = .secondaryLabelColor
-        }
-        super.draw(dirtyRect)
     }
 }
