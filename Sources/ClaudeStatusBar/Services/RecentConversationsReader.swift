@@ -109,6 +109,10 @@ public enum RecentConversationsReader {
     }
 
     private static func parseFile(at url: URL) -> String? {
+        guard let attrs = try? FileManager.default.attributesOfItem(atPath: url.path),
+              let size = attrs[.size] as? Int,
+              size <= maxFileBytes
+        else { return nil }
         guard let data = try? Data(contentsOf: url) else { return nil }
         return parseFirstPrompt(data)
     }

@@ -215,6 +215,51 @@ final class RecentConversationsReaderTests: XCTestCase {
         XCTAssertEqual(result[0].firstPrompt, "new prompt")
     }
 
+    func testReadSkipsFilesOverSizeLimit() throws {
+        let tmp = makeTempProjectsRoot()
+        defer { cleanup(tmp) }
+        let projectDir = tmp.appendingPathComponent(
+            SessionDetailsReader.encodeProjectPath("/proj")
+        )
+        try FileManager.default.createDirectory(at: projectDir, withIntermediateDirectories: true)
+        // 一个超大稀疏文件
+        let bigURL = projectDir.appendingPathComponent("big.jsonl")
+        FileManager.default.createFile(atPath: bigURL.path, contents: nil)
+        let fh = try FileHandle(forWritingTo: bigURL)
+        try fh.truncate(atOffset: UInt64(RecentConversationsReader.maxFileBytes + 1))
+        try fh.close()
+        // 一个正常的小文件, 应当被保留
+        try writeFlatJsonl(in: projectDir, sessionId: "small", firstPrompt: "ok")
+
+        let result = RecentConversationsReader.read(
+            cwd: "/proj", excluding: nil, projectsRoot: tmp
+        )
+        XCTAssertEqual(result.map { $0.sessionId }, ["small"])
+    }
+
+    func testReadSkipsCandidatesWithNoUserStringPrompt() throws {
+        let tmp = makeTempProjectsRoot()
+        defer { cleanup(tmp) }
+        let projectDir = tmp.appendingPathComponent(
+            SessionDetailsReader.encodeProjectPath("/proj")
+        )
+        try FileManager.default.createDirectory(at: projectDir, withIntermediateDirectories: true)
+        // 这个 jsonl 整个没有 user-string content, 应整体跳过
+        let emptyPromptURL = projectDir.appendingPathComponent("ghost.jsonl")
+        let body = #"""
+        {"type":"system","content":"x"}
+        {"type":"assistant","message":{"content":[{"type":"text","text":"hi"}]}}
+        """#
+        try body.write(to: emptyPromptURL, atomically: true, encoding: .utf8)
+        // 正常文件
+        try writeFlatJsonl(in: projectDir, sessionId: "real", firstPrompt: "real prompt")
+
+        let result = RecentConversationsReader.read(
+            cwd: "/proj", excluding: nil, projectsRoot: tmp
+        )
+        XCTAssertEqual(result.map { $0.sessionId }, ["real"])
+    }
+
     // MARK: - test fixtures
 
     private func makeTempProjectsRoot() -> URL {
