@@ -130,7 +130,67 @@ final class SessionRowView: NSView {
         }
     }
 
-    @objc private func terminateClicked() {
+    /// `@objc` 是为了 NSButton.target/action 派发;internal 可见性是为了让单测
+    /// 直接调用 —— XCTest 环境下 NSButton.performClick / sendAction 都不可靠
+    /// (无 NSApp event loop / 按钮不在 window 里),走 target/action 的真实链路
+    /// 是这一个方法。
+    @objc func terminateClicked() {
         onTerminate(session.pid)
+    }
+
+    // MARK: - hover 跟踪
+
+    /// 抽出来给单测调用 —— 真 NSEvent 构造比较繁琐,而 NSResponder 的
+    /// mouseEntered/mouseExited 本身就只是把事件转给这里。
+    func handleHoverChanged(isHovering: Bool) {
+        terminateButton?.isHidden = !isHovering
+    }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        trackingAreas.forEach { removeTrackingArea($0) }
+        let area = NSTrackingArea(
+            rect: .zero,
+            options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect],
+            owner: self,
+            userInfo: nil
+        )
+        addTrackingArea(area)
+    }
+
+    override func mouseEntered(with event: NSEvent) {
+        handleHoverChanged(isHovering: true)
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        handleHoverChanged(isHovering: false)
+    }
+
+    // MARK: - 主行点击
+
+    /// NSMenu tracking 模式下 NSMenuItem.view 不会自动触发 NSMenuItem.action,
+    /// 必须自己处理 mouseUp。按钮区域内的点击让 NSButton 自己消化。
+    override func mouseUp(with event: NSEvent) {
+        let p = convert(event.locationInWindow, from: nil)
+        if let btn = terminateButton, !btn.isHidden, btn.frame.contains(p) {
+            return
+        }
+        onClick()
+        enclosingMenuItem?.menu?.cancelTracking()
+    }
+
+    // MARK: - 高亮态背景
+
+    override func draw(_ dirtyRect: NSRect) {
+        if enclosingMenuItem?.isHighlighted == true {
+            NSColor.selectedMenuItemColor.setFill()
+            bounds.fill()
+            mainLabel.textColor = .selectedMenuItemTextColor
+            secondaryLabel?.textColor = .selectedMenuItemTextColor
+        } else {
+            mainLabel.textColor = .labelColor
+            secondaryLabel?.textColor = .secondaryLabelColor
+        }
+        super.draw(dirtyRect)
     }
 }

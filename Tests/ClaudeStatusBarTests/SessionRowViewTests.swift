@@ -47,4 +47,36 @@ final class SessionRowViewTests: XCTestCase {
         )
         XCTAssertNotNil(view.terminateButton)
     }
+
+    func testHoverShowsAndHidesTerminateButton() {
+        let s = makeSession(status: .busy)
+        let view = SessionRowView(
+            session: s,
+            secondary: nil,
+            onTerminate: { _ in },
+            onClick: {}
+        )
+        XCTAssertTrue(view.terminateButton!.isHidden, "初始隐藏")
+
+        view.handleHoverChanged(isHovering: true)
+        XCTAssertFalse(view.terminateButton!.isHidden, "hover 进入后显示")
+
+        view.handleHoverChanged(isHovering: false)
+        XCTAssertTrue(view.terminateButton!.isHidden, "hover 离开后再隐藏")
+    }
+
+    func testTerminateClickInvokesCallbackWithPid() {
+        var receivedPid: Int?
+        let s = makeSession(pid: 9001, status: .waiting)
+        let view = SessionRowView(
+            session: s,
+            secondary: nil,
+            onTerminate: { receivedPid = $0 },
+            onClick: {}
+        )
+        // performClick / sendAction 在 XCTest 里不可靠(无 NSApp event loop),
+        // 直接调用 NSButton 的 target/action 方法 —— 真实点击的最后一环。
+        view.terminateClicked()
+        XCTAssertEqual(receivedPid, 9001)
+    }
 }
