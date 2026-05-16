@@ -474,6 +474,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         else { NSSound.beep() }
     }
 
+    /// 「恢复上次会话」子菜单的 action 入口.
+    /// representedObject 是历史 sessionId, 拼成 `claude --resume <id>` 写剪贴板.
+    /// 反馈走 WaitingNotifier.notify(title:body:) 通用通道, 不过 settings 网关
+    /// (用户主动操作的反馈, 不是被动打扰).
+    @objc private func copyResumeCommand(_ sender: NSMenuItem) {
+        guard let sid = sender.representedObject as? String else { return }
+        let cmd = "claude --resume \(sid)"
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(cmd, forType: .string)
+        notifier.notify(title: "已复制 resume 命令", body: cmd)
+    }
+
     private func handleNotificationClick(pid: Int, cwd: String?) {
         if let app = findOwningApp(of: pid) {
             app.activate(options: [.activateAllWindows])
