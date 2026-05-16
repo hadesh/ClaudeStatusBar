@@ -28,7 +28,8 @@ public enum RecentConversationsReader {
     }
 
     /// 读 cwd 对应 projects 目录下的历史会话, 按 mtime 倒序返回前 limit 个有效项.
-    /// 扁平布局: `<projectDir>/<sessionId>.jsonl`.  子目录布局在后续 commit 加.
+    /// 扁平布局: `<projectDir>/<sessionId>.jsonl`;
+    /// 子目录布局: `<projectDir>/<sessionId>/<anything>.jsonl`(取 mtime 最新的一个).
     public static func read(
         cwd: String,
         excluding sessionId: String?,
@@ -71,16 +72,40 @@ public enum RecentConversationsReader {
 
         var result: [Candidate] = []
         for entry in entries {
-            // 子目录布局在下一个 commit 加, 这里只处理扁平 *.jsonl
-            guard entry.pathExtension == "jsonl" else { continue }
-            let stem = entry.deletingPathExtension().lastPathComponent
-            if let excluding, stem == excluding { continue }
-            guard let mt = (try? entry.resourceValues(forKeys: [.contentModificationDateKey]))?
-                    .contentModificationDate
-            else { continue }
-            result.append(Candidate(url: entry, sessionId: stem, modifiedAt: mt))
+            let isDir = (try? entry.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory ?? false
+            if isDir {
+                if let c = candidateFromSubdirectory(entry, excluding: excluding) {
+                    result.append(c)
+                }
+            } else if entry.pathExtension == "jsonl" {
+                let stem = entry.deletingPathExtension().lastPathComponent
+                if let excluding, stem == excluding { continue }
+                guard let mt = (try? entry.resourceValues(forKeys: [.contentModificationDateKey]))?
+                        .contentModificationDate
+                else { continue }
+                result.append(Candidate(url: entry, sessionId: stem, modifiedAt: mt))
+            }
         }
         return result
+    }
+
+    /// 子目录布局: dir 名即 sessionId, 取里面 mtime 最新的一个 *.jsonl 当代表.
+    private static func candidateFromSubdirectory(_ dir: URL, excluding: String?) -> Candidate? {
+        let dirName = dir.lastPathComponent
+        if let excluding, dirName == excluding { return nil }
+        guard let inner = try? FileManager.default.contentsOfDirectory(
+            at: dir,
+            includingPropertiesForKeys: [.contentModificationDateKey]
+        ) else { return nil }
+        var best: (URL, Date)?
+        for f in inner where f.pathExtension == "jsonl" {
+            guard let mt = (try? f.resourceValues(forKeys: [.contentModificationDateKey]))?
+                    .contentModificationDate
+            else { continue }
+            if best == nil || mt > best!.1 { best = (f, mt) }
+        }
+        guard let (url, mt) = best else { return nil }
+        return Candidate(url: url, sessionId: dirName, modifiedAt: mt)
     }
 
     private static func parseFile(at url: URL) -> String? {

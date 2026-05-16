@@ -143,6 +143,55 @@ final class RecentConversationsReaderTests: XCTestCase {
         XCTAssertEqual(result.map { $0.sessionId }, ["s0", "s1", "s2"])
     }
 
+    func testReadExcludesGivenSessionIdFlat() throws {
+        let tmp = makeTempProjectsRoot()
+        defer { cleanup(tmp) }
+        let projectDir = tmp.appendingPathComponent(
+            SessionDetailsReader.encodeProjectPath("/proj")
+        )
+        try FileManager.default.createDirectory(at: projectDir, withIntermediateDirectories: true)
+        try writeFlatJsonl(in: projectDir, sessionId: "keep", firstPrompt: "keep me", mtime: Date(timeIntervalSinceNow: -60))
+        try writeFlatJsonl(in: projectDir, sessionId: "skip", firstPrompt: "skip me", mtime: Date(timeIntervalSinceNow: -30))
+
+        let result = RecentConversationsReader.read(
+            cwd: "/proj", excluding: "skip", projectsRoot: tmp
+        )
+        XCTAssertEqual(result.map { $0.sessionId }, ["keep"])
+    }
+
+    func testReadSubdirectoryLayoutSessionIdFromParent() throws {
+        let tmp = makeTempProjectsRoot()
+        defer { cleanup(tmp) }
+        let projectDir = tmp.appendingPathComponent(
+            SessionDetailsReader.encodeProjectPath("/proj")
+        )
+        try FileManager.default.createDirectory(at: projectDir, withIntermediateDirectories: true)
+        try writeSubdirJsonl(in: projectDir, sessionId: "sub-1", filename: "log.jsonl", firstPrompt: "from subdir")
+
+        let result = RecentConversationsReader.read(
+            cwd: "/proj", excluding: nil, projectsRoot: tmp
+        )
+        XCTAssertEqual(result.count, 1)
+        XCTAssertEqual(result[0].sessionId, "sub-1")
+        XCTAssertEqual(result[0].firstPrompt, "from subdir")
+    }
+
+    func testReadExcludesGivenSessionIdSubdir() throws {
+        let tmp = makeTempProjectsRoot()
+        defer { cleanup(tmp) }
+        let projectDir = tmp.appendingPathComponent(
+            SessionDetailsReader.encodeProjectPath("/proj")
+        )
+        try FileManager.default.createDirectory(at: projectDir, withIntermediateDirectories: true)
+        try writeSubdirJsonl(in: projectDir, sessionId: "keep", filename: "a.jsonl", firstPrompt: "keep")
+        try writeSubdirJsonl(in: projectDir, sessionId: "skip", filename: "b.jsonl", firstPrompt: "skip")
+
+        let result = RecentConversationsReader.read(
+            cwd: "/proj", excluding: "skip", projectsRoot: tmp
+        )
+        XCTAssertEqual(result.map { $0.sessionId }, ["keep"])
+    }
+
     // MARK: - test fixtures
 
     private func makeTempProjectsRoot() -> URL {
@@ -156,6 +205,27 @@ final class RecentConversationsReaderTests: XCTestCase {
 
     private func cleanup(_ url: URL) {
         try? FileManager.default.removeItem(at: url)
+    }
+
+    /// 写一个子目录布局的 jsonl: <projectDir>/<sessionId>/<filename>
+    private func writeSubdirJsonl(
+        in projectDir: URL,
+        sessionId: String,
+        filename: String,
+        firstPrompt: String,
+        mtime: Date? = nil
+    ) throws {
+        let dir = projectDir.appendingPathComponent(sessionId)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let url = dir.appendingPathComponent(filename)
+        let line = #"{"type":"user","message":{"role":"user","content":"\#(firstPrompt)"}}"#
+        try line.write(to: url, atomically: true, encoding: .utf8)
+        if let mtime {
+            try FileManager.default.setAttributes(
+                [.modificationDate: mtime],
+                ofItemAtPath: url.path
+            )
+        }
     }
 
     /// 写一个扁平布局的 jsonl: <projectDir>/<sessionId>.jsonl
