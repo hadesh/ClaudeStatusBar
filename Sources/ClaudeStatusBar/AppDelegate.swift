@@ -264,7 +264,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         } else {
             for s in sessions.sorted(by: { $0.pid < $1.pid }) {
                 menu.addItem(makeSessionItem(s))
-                if let detail = makeSessionDetailItem(s) {
+                // fresh session(还没产生 user prompt)挂「恢复上次会话」子菜单;
+                // 否则挂模型/上下文 detail 行. 两条路径互斥.
+                if contextStore.contextByPid[s.pid]?.recentPrompt == nil {
+                    if let resume = makeRecentResumeItem(for: s) {
+                        menu.addItem(resume)
+                    }
+                } else if let detail = makeSessionDetailItem(s) {
                     menu.addItem(detail)
                 }
             }
