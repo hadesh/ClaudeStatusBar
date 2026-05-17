@@ -38,6 +38,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var reminderTimer: DispatchSourceTimer?
     private var lastReminderInterval: TimeInterval?
     private var cancellables = Set<AnyCancellable>()
+    /// 子菜单条目的相对时间格式器: "5 分钟前" / "2 小时前" / "昨天" / "3 天前" 等.
+    /// rebuildMenu 每次都会调用 makeRecentResumeItem, 复用同一个 formatter 避免反复创建.
+    private lazy var relativeFormatter: RelativeDateTimeFormatter = {
+        let f = RelativeDateTimeFormatter()
+        f.locale = Locale(identifier: "zh_CN")
+        f.unitsStyle = .short
+        return f
+    }()
     private lazy var settingsWindowController = SettingsWindowController(
         settings: settings, loginItem: loginItem
     )
@@ -420,6 +428,37 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         item.isEnabled = false
         item.indentationLevel = 1
         return item
+    }
+
+    /// fresh session(SessionContextStore 拿不到 recentPrompt)行下方的「恢复上次会话 ▸」
+    /// 子菜单. 同 cwd 下没有可恢复的历史时返回 nil(不挂任何条目, 视觉上跟没这个功能一样).
+    private func makeRecentResumeItem(for s: Session) -> NSMenuItem? {
+        let recents = RecentConversationsReader.read(
+            cwd: s.cwd, excluding: s.sessionId
+        )
+        guard !recents.isEmpty else { return nil }
+
+        let parent = NSMenuItem(title: "恢复上次会话", action: nil, keyEquivalent: "")
+        parent.indentationLevel = 1
+        let submenu = NSMenu()
+        for r in recents {
+            let title = "\(r.firstPrompt)  ·  \(formatRelative(r.modifiedAt))"
+            let it = NSMenuItem(
+                title: title,
+                action: #selector(copyResumeCommand(_:)),
+                keyEquivalent: ""
+            )
+            it.target = self
+            it.toolTip = "claude --resume \(r.sessionId)"
+            it.representedObject = r.sessionId
+            submenu.addItem(it)
+        }
+        parent.submenu = submenu
+        return parent
+    }
+
+    private func formatRelative(_ date: Date) -> String {
+        relativeFormatter.localizedString(for: date, relativeTo: Date())
     }
 
     /// SessionRowView 主行点击入口。沿用旧 revealSession 的全部语义:
