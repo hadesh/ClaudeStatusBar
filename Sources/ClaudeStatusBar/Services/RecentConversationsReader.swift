@@ -11,7 +11,8 @@ public enum RecentConversationsReader {
     public static let promptMaxChars: Int = 80
 
     /// 顺序扫描 JSONL, 返回第一条 type=user, content 为非空 string 的消息内容.
-    /// 截断到 promptMaxChars + "…".  array(tool_result)形态的 user 消息跳过, 损坏 JSON 行跳过.
+    /// 截断到 promptMaxChars + "…".  跳过:array(tool_result)形态的 user 消息,
+    /// 损坏 JSON 行, CLI 注入的伪 user 消息(`!` 命令副作用 / slash command / stdout 等).
     public static func parseFirstPrompt(_ data: Data) -> String? {
         guard let text = String(data: data, encoding: .utf8) else { return nil }
         let decoder = JSONDecoder()
@@ -20,7 +21,8 @@ public enum RecentConversationsReader {
                   let entry = try? decoder.decode(UserEntry.self, from: lineData),
                   entry.type == "user",
                   case .string(let s) = entry.message?.content ?? .array,
-                  !s.isEmpty
+                  !s.isEmpty,
+                  !looksLikeCliInjection(s)
             else { continue }
             return truncate(s, max: promptMaxChars)
         }
@@ -121,6 +123,24 @@ public enum RecentConversationsReader {
 
     private static func truncate(_ s: String, max: Int) -> String {
         s.count > max ? String(s.prefix(max)) + "…" : s
+    }
+
+    /// CLI 把 `!` 命令副作用、slash command、命令 stdout 都以 type=user 注入 jsonl,
+    /// 用一组已知尖括号标签包裹. 这些不是用户主动发起的对话, 在子菜单里展示是杂讯.
+    /// 用户实际打字的 prompt 不会以这些前缀开头.
+    private static func looksLikeCliInjection(_ s: String) -> Bool {
+        let trimmed = s.trimmingCharacters(in: .whitespacesAndNewlines)
+        let prefixes = [
+            "<local-command-",   // local-command-caveat / local-command-stdout / local-command-stderr
+            "<command-name>",    // slash command 调用
+            "<command-message>",
+            "<command-args>",
+            "<system-reminder>",
+            "<bash-input>",
+            "<bash-stdout>",
+            "<bash-stderr>",
+        ]
+        return prefixes.contains(where: { trimmed.hasPrefix($0) })
     }
 
     // MARK: - JSON shapes
