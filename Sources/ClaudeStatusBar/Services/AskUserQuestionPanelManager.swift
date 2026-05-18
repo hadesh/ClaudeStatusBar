@@ -35,7 +35,7 @@ final class AskUserQuestionPanelManager {
     // MARK: - Private
 
     private func present(_ request: PermissionPromptRequest) {
-        guard request.toolName == "AskUserQuestion" else { return }
+        guard request.kind == .askUserQuestion else { return }
         guard !entries.contains(where: { $0.id == request.id }) else { return }
         let panel = AskUserQuestionPanel(request: request) { [weak self] outcome in
             self?.handleResponse(id: request.id, outcome: outcome)
@@ -63,6 +63,15 @@ final class AskUserQuestionPanelManager {
             store.abandon(id: id)
         case .abandon:
             store.abandon(id: id)
+        case .submit(let answers):
+            // 用户在浮窗里答完。把 answers 包进 AskUserQuestionOutput 形态喂给
+            // helper 当作 PreToolUse hook 的 updatedInput,CLI 直接 short-circuit
+            // 工具执行,跳过终端 select。schema: sdk-tools.d.ts:2620-2798。
+            guard let req = entries.first(where: { $0.id == id })?.panel.request else { return }
+            var merged: [String: JSONValue] = [:]
+            merged["questions"] = req.input["questions"] ?? .array([])
+            merged["answers"] = .object(answers.mapValues { .string($0) })
+            store.resolve(id: id, decision: .allow(id: id, input: merged))
         }
     }
 

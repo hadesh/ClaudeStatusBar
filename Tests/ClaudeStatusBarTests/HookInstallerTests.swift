@@ -301,4 +301,116 @@ final class HookInstallerTests: XCTestCase {
         let inner = try XCTUnwrap(pr.first?["hooks"] as? [[String: Any]])
         XCTAssertEqual(inner.first?["async"] as? Bool, true)
     }
+
+    // MARK: - PreToolUse 路径
+
+    func testCurrentPreToolUseInstallationReturnsNilWhenAbsent() throws {
+        XCTAssertNil(try HookInstaller.currentPreToolUseInstallation(settingsURL: settingsURL))
+    }
+
+    func testCurrentPreToolUseInstallationIgnoresOtherMatchers() throws {
+        // 用户在 PreToolUse 上挂了 Bash matcher 的别的 hook,与我们无关。
+        try writeSettings(#"""
+        {
+          "hooks": {
+            "PreToolUse": [
+              {"matcher": "Bash", "hooks": [{"type":"command","command":"/some/bash-rewrite.sh"}]}
+            ]
+          }
+        }
+        """#)
+        XCTAssertNil(try HookInstaller.currentPreToolUseInstallation(settingsURL: settingsURL))
+    }
+
+    func testCurrentPreToolUseInstallationParsesAskUserQuestionEntry() throws {
+        try writeSettings(#"""
+        {
+          "hooks": {
+            "PreToolUse": [
+              {"matcher": "Bash", "hooks": [{"type":"command","command":"/x.sh"}]},
+              {"matcher": "AskUserQuestion", "hooks": [{"type":"command","command":"/Apps/ClaudeStatusBar.app/Contents/MacOS/ClaudeStatusBarHook","timeout":300}]}
+            ]
+          }
+        }
+        """#)
+        let cfg = try HookInstaller.currentPreToolUseInstallation(settingsURL: settingsURL)
+        XCTAssertEqual(cfg?.hookSpec["timeout"] as? Int, 300)
+        XCTAssertEqual(cfg?.hookSpec["command"] as? String,
+                       "/Apps/ClaudeStatusBar.app/Contents/MacOS/ClaudeStatusBarHook")
+    }
+
+    func testInstallPreToolUseAddsNewMatcherEntry() throws {
+        // 空 settings → 第一次安装。
+        try HookInstaller.installPreToolUse(.defaultPreToolUse, settingsURL: settingsURL)
+        let root = try readSettings()
+        let pre = try XCTUnwrap(((root["hooks"] as? [String: Any])?["PreToolUse"]) as? [[String: Any]])
+        XCTAssertEqual(pre.count, 1)
+        XCTAssertEqual(pre[0]["matcher"] as? String, "AskUserQuestion")
+        let inner = try XCTUnwrap(pre[0]["hooks"] as? [[String: Any]])
+        XCTAssertEqual(inner.first?["timeout"] as? Int, 300)
+    }
+
+    func testInstallPreToolUsePreservesOtherMatchers() throws {
+        // 用户在 PreToolUse 上已经有 Bash matcher 的 entry,我们安装不能动它。
+        try writeSettings(#"""
+        {
+          "hooks": {
+            "PreToolUse": [
+              {"matcher": "Bash", "hooks": [{"type":"command","command":"/x.sh"}]}
+            ]
+          }
+        }
+        """#)
+        try HookInstaller.installPreToolUse(.defaultPreToolUse, settingsURL: settingsURL)
+        let root = try readSettings()
+        let pre = try XCTUnwrap(((root["hooks"] as? [String: Any])?["PreToolUse"]) as? [[String: Any]])
+        XCTAssertEqual(pre.count, 2)
+        let bash = pre.first { ($0["matcher"] as? String) == "Bash" }
+        XCTAssertNotNil(bash, "Bash matcher 必须保留")
+        let ask = pre.first { ($0["matcher"] as? String) == "AskUserQuestion" }
+        XCTAssertNotNil(ask)
+    }
+
+    func testInstallPreToolUseReplacesExistingClaudeStatusBarHook() throws {
+        // 已经有我们的 entry,再次安装(比如改了 timeout)应替换不复制。
+        try writeSettings(#"""
+        {
+          "hooks": {
+            "PreToolUse": [
+              {"matcher": "AskUserQuestion", "hooks": [{"type":"command","command":"/old/ClaudeStatusBarHook","timeout":60}]}
+            ]
+          }
+        }
+        """#)
+        let updated = HookInstaller.Configuration(hookSpec: [
+            "type": "command",
+            "command": "/new/ClaudeStatusBarHook",
+            "timeout": 300,
+        ])
+        try HookInstaller.installPreToolUse(updated, settingsURL: settingsURL)
+        let root = try readSettings()
+        let pre = try XCTUnwrap(((root["hooks"] as? [String: Any])?["PreToolUse"]) as? [[String: Any]])
+        XCTAssertEqual(pre.count, 1, "不应新增 entry,只替换")
+        let inner = try XCTUnwrap(pre[0]["hooks"] as? [[String: Any]])
+        XCTAssertEqual(inner.count, 1)
+        XCTAssertEqual(inner[0]["command"] as? String, "/new/ClaudeStatusBarHook")
+        XCTAssertEqual(inner[0]["timeout"] as? Int, 300)
+    }
+
+    func testInstallPreToolUseCoexistsWithPermissionRequest() throws {
+        // 双 hook 共存:先装 PermissionRequest,再装 PreToolUse,两边都还在。
+        try HookInstaller.install(.default, settingsURL: settingsURL)
+        try HookInstaller.installPreToolUse(.defaultPreToolUse, settingsURL: settingsURL)
+
+        let root = try readSettings()
+        let hooks = try XCTUnwrap(root["hooks"] as? [String: Any])
+        let pr = try XCTUnwrap(hooks["PermissionRequest"] as? [[String: Any]])
+        let pre = try XCTUnwrap(hooks["PreToolUse"] as? [[String: Any]])
+        XCTAssertEqual(pr.count, 1)
+        XCTAssertEqual(pre.count, 1)
+
+        // 两次 read 都应能找到自己那条。
+        XCTAssertNotNil(try HookInstaller.currentInstallation(settingsURL: settingsURL))
+        XCTAssertNotNil(try HookInstaller.currentPreToolUseInstallation(settingsURL: settingsURL))
+    }
 }

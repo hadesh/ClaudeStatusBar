@@ -40,18 +40,18 @@ ClaudeStatusBar.app  →  浮动面板(允许 / 一直允许 / 拒绝)
 
 跟系统通知**无关**——面板是自家窗口,不走 `UNUserNotificationCenter`。所以你不需要配置「提醒样式」,也不依赖系统通知权限,Focus / Do Not Disturb 模式下也照常工作。
 
-**系统通知不再用于工具权限请求。** 浮窗已经在该会话上承担了"等待响应"的告知,主 app 会主动**抑制**这类会话的「Claude Code 等待响应」banner(以及 5s 周期的二次提醒),避免和面板叠一层。系统通知 banner 只保留两类场景:
+**系统通知不再用于工具权限请求。** 浮窗已经在该会话上承担了"等待响应"的告知,主 app 会主动**抑制**这类会话的「Claude Code 等待响应」banner(以及 5s 周期的二次提醒),避免和面板叠一层。系统通知 banner 只保留一类场景:
 - **任务完成**:CLI 会话从 `busy` 转回 `idle` 时弹「Claude Code 任务完成 · {项目名}」,点击跳回对应终端。
-- **AskUserQuestion**(下面)。
 
-## 例外:`AskUserQuestion` 不弹浮窗
+## `AskUserQuestion`:浮窗里直接答(走 PreToolUse hook)
 
-`AskUserQuestion` 是 Claude Code 内置的"多选题"工具(LLM 用它跟用户做澄清),触发的 PermissionRequest 在面板里只能给 allow / deny,但 askUserQuestion 真正的内容是**多个选项**,只能在终端里答。所以主 app 对这个工具特殊处理:
-- **不弹浮窗**(PanelManager 在 `toolsRoutedAwayFromPanel` 里硬编码 `AskUserQuestion`,直接跳过)
-- **改弹系统通知**「Claude Code 需要你回答 · {项目名} · 请回到终端选择」,点击跳回对应终端
-- **立刻 abandon**(主 app 不答,等同上面 ✕ 的路径),让 CLI 那边的终端 prompt 接管,askUserQuestion 的多选题正常出现在终端,用户答完即可
+`AskUserQuestion` 是 Claude Code 内置的多选题工具(LLM 用它跟用户做澄清)。从 Claude Code **2.1.85** 起,CLI 接受 `PreToolUse` hook 输出 `permissionDecision: "allow" + updatedInput.{questions, answers, annotations?}` 来短路 AskUserQuestion 的终端 select(详见 changelog 2.1.85 条目)。本仓库利用这条通道,把答题搬进浮窗:
 
-要给其他工具加同样的"不弹面板,只通知"处理,改 `PermissionPromptPanelManager.toolsRoutedAwayFromPanel` 这个集合即可,两端的订阅会自动按 toolName 分流。
+- **专属浮窗**:屏幕右上角弹出 `AskUserQuestionPanel`,渲染所有 question + 选项(单选用 radio,多选用 checkbox),每个 question 末尾自带「Other」radio + 文本框做自由回答。
+- **提交后短路**:点「提交」→ 浮窗把答案打成 `{[question]: label}`(多选用 `", "` 串接) → helper 输出 `hookSpecificOutput.permissionDecision=allow + updatedInput.answers=...` → CLI 直接把答案当作工具结果,**终端不再出 select**。
+- **逃生口保留**:浮窗左下角的「跳回终端答」按钮 / ✕ / 主 app 没在跑 / hook 超时 → 都退化为「让 CLI 终端 select 接管」,体验等同 vanilla claude。session-exit detector 还是会负责在用户从终端答完后自动 dismiss 浮窗。
+
+**为什么不复用 PermissionRequest**:`PermissionRequest` 的 decision schema 只有 allow / deny / allowAlways,`updatedInput` 是修改入参不是塞结果。而 `PreToolUse` 在 2.1.85 起对 AskUserQuestion 加了 short-circuit 语义。所以 helper 端按 stdin `hook_event_name` 分流:`PermissionRequest + AskUserQuestion` 直接 allow 不发 socket(避免和 PreToolUse 路径重复弹浮窗);浮窗只由 `PreToolUse + AskUserQuestion` 这条路径触发。
 
 ## 配置(两步)
 
@@ -59,7 +59,7 @@ ClaudeStatusBar.app  →  浮动面板(允许 / 一直允许 / 拒绝)
 
 把 release 构建的 `ClaudeStatusBar.app` 拷到 `/Applications`,启动一次。**不需要授予系统通知权限**——面板不走通知系统。
 
-### 2. 在 settings.json 里注册 hook
+### 2. 在 settings.json 里注册 hook(两条)
 
 编辑 `~/.claude/settings.json`,加上:
 
@@ -76,14 +76,28 @@ ClaudeStatusBar.app  →  浮动面板(允许 / 一直允许 / 拒绝)
           }
         ]
       }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "AskUserQuestion",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/Applications/ClaudeStatusBar.app/Contents/MacOS/ClaudeStatusBarHook",
+            "timeout": 300
+          }
+        ]
+      }
     ]
   }
 }
 ```
 
-`timeout: 600` 给主 app 10 分钟(也是 CLI 的默认超时)。如果你已经有别的 `PermissionRequest` hook(例如 audit-hook),并存就行——sync hook 只参与决策的 race,async 的不参与,互不影响。
+两条 hook 各管各:
+- **PermissionRequest** —— 工具权限浮窗(Bash / Read / Write / MCP 等)。`timeout: 600` 给主 app 10 分钟。
+- **PreToolUse** + `matcher: "AskUserQuestion"` —— AskUserQuestion 浮窗内答题。`timeout: 300` 与浮窗 5 分钟自动 abandon 对齐。
 
-**没有 alias 改动,没有启动 flag**。装完直接跑 `claude` 就有效。
+如果你已经有别的 hook(audit-hook、rtk-rewrite 等),并存就行——同一个二进制按 stdin 的 `hook_event_name` 字段自动分流,sync hook 只参与决策的 race,async 不参与,互不影响。**没有 alias 改动,没有启动 flag**。装完直接跑 `claude` 就有效。
 
 ## 验证
 
@@ -140,3 +154,4 @@ claude --debug
 - 如果同时有 5 个以上 pending 请求,堆叠会超出屏幕高度——v1 不滚动也不折叠,后面的会跑到屏幕外。实际场景下并发 > 3 个的概率极低。
 - helper 与主 app 之间的 socket 路径硬编码为 `~/Library/Application Support/ClaudeStatusBar/prompt.sock`(目录权限 0700,socket 0600)。多用户共享主目录的奇怪场景需要自己改 `AppDelegate.permissionSocketPath()` 和 `Sources/ClaudeStatusBarHook/main.swift` 的 `socketPath` 常量,确保两端一致。
 - 已在 **Claude Code 2.1.140** 验证。`PermissionRequest` hook 是公开的钩子事件,但 `hookSpecificOutput.decision` 字段相对较新,过老的版本可能不识别(只会忽略输出,不会报错——等于功能不生效,不影响 CLI 正常使用)。
+- AskUserQuestion 浮窗代答依赖 **Claude Code 2.1.85+** 的 PreToolUse short-circuit(changelog: "PreToolUse hooks can now satisfy AskUserQuestion by returning updatedInput alongside permissionDecision: allow")。低于这个版本的 CLI 看到陌生 envelope 字段会忽略,继续走终端 select,功能只是不生效不会崩——浮窗里仍可以点「跳回终端答」走老路。

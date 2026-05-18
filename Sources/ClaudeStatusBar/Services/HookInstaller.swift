@@ -40,6 +40,18 @@ public enum HookInstaller {
             "timeout": defaultTimeoutSeconds,
         ])
 
+        /// PreToolUse hook 的默认 timeout(秒)。与 PermissionPromptStore.timeout
+        /// (300s)对齐 — 浮窗超时后让 helper 也被 kill,CLI 终端 select 接管。
+        public static let defaultPreToolUseTimeoutSeconds = 300
+
+        /// PreToolUse 默认配置。matcher 在 install 路径里写死 AskUserQuestion,
+        /// 这里只装 hookSpec 本体。
+        public static let defaultPreToolUse = Configuration(hookSpec: [
+            "type": "command",
+            "command": defaultBundleCommand,
+            "timeout": defaultPreToolUseTimeoutSeconds,
+        ])
+
         /// 漂亮印刷形式,给 UI 多行编辑框做初始内容用。换行 + key 排序 + 不
         /// escape `/`(看起来更清爽)。
         public func prettyJSON() -> String {
@@ -159,6 +171,81 @@ public enum HookInstaller {
         hooks["PermissionRequest"] = permissionRequest
         root["hooks"] = hooks
 
+        try writeSettings(root, to: settingsURL)
+    }
+
+    // MARK: - PreToolUse 路径(代答 AskUserQuestion)
+
+    /// PreToolUse hook 在 settings.json 里以 matcher=AskUserQuestion 锚定。
+    /// 我们用「matcher == AskUserQuestion AND inner.command 含 marker」双锚定
+    /// 识别"自己的"那条,避免误覆盖用户在 PreToolUse 上挂的别的 matcher entry。
+    public static let preToolUseMatcher = "AskUserQuestion"
+
+    /// 读出当前 PreToolUse 路径上已安装的 ClaudeStatusBar hook(matcher=AskUserQuestion)。
+    /// 返回 nil = 未安装。
+    public static func currentPreToolUseInstallation(
+        settingsURL: URL = defaultSettingsURL
+    ) throws -> Configuration? {
+        guard let root = try readSettings(at: settingsURL) else { return nil }
+        guard let hooks = root["hooks"] as? [String: Any],
+              let preToolUse = hooks["PreToolUse"] as? [[String: Any]]
+        else { return nil }
+        for entry in preToolUse {
+            guard (entry["matcher"] as? String) == preToolUseMatcher,
+                  let inner = entry["hooks"] as? [[String: Any]]
+            else { continue }
+            for hook in inner {
+                guard let command = hook["command"] as? String,
+                      command.contains(Configuration.commandMarker)
+                else { continue }
+                return Configuration(hookSpec: hook)
+            }
+        }
+        return nil
+    }
+
+    /// 把 `config` 安装/更新到 settings.json 的 PreToolUse 数组,matcher 写死
+    /// AskUserQuestion。已有「matcher=AskUserQuestion + ClaudeStatusBarHook」
+    /// entry 就替换;否则追加一个新 matcher entry(不和用户已有的 Bash matcher
+    /// 等共用 entry,这样 uninstall 时只删自己那一行)。
+    public static func installPreToolUse(
+        _ config: Configuration,
+        settingsURL: URL = defaultSettingsURL
+    ) throws {
+        var root = (try readSettings(at: settingsURL)) ?? [:]
+        var hooks = (root["hooks"] as? [String: Any]) ?? [:]
+        var preToolUse = (hooks["PreToolUse"] as? [[String: Any]]) ?? []
+
+        let ourHook = config.hookSpec
+        var replaced = false
+
+        for i in preToolUse.indices {
+            guard var entry = preToolUse[i] as? [String: Any],
+                  (entry["matcher"] as? String) == preToolUseMatcher,
+                  var inner = entry["hooks"] as? [[String: Any]]
+            else { continue }
+            for j in inner.indices {
+                if let cmd = inner[j]["command"] as? String,
+                   cmd.contains(Configuration.commandMarker) {
+                    inner[j] = ourHook
+                    entry["hooks"] = inner
+                    preToolUse[i] = entry
+                    replaced = true
+                    break
+                }
+            }
+            if replaced { break }
+        }
+
+        if !replaced {
+            preToolUse.append([
+                "matcher": preToolUseMatcher,
+                "hooks": [ourHook],
+            ])
+        }
+
+        hooks["PreToolUse"] = preToolUse
+        root["hooks"] = hooks
         try writeSettings(root, to: settingsURL)
     }
 

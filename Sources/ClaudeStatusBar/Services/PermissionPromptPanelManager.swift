@@ -18,12 +18,6 @@ final class PermissionPromptPanelManager {
     private var allowHotkey: GlobalHotkey?
     private var denyHotkey: GlobalHotkey?
 
-    /// 这些工具不走常规 allow/deny 浮窗 —— `AskUserQuestion` 是结构化的多选题,
-    /// 「允许 / 拒绝」按钮没语义。`AskUserQuestionPanelManager` 在同一条
-    /// `store.incoming` 上单独订阅,给这些请求弹专属浮窗(只展示 + 跳回终端,
-    /// 本期不代答)。本管理器对它们直接 early-return。
-    static let toolsRoutedAwayFromPanel: Set<String> = ["AskUserQuestion"]
-
     init(store: PermissionPromptStore, stack: FloatingPanelStack) {
         self.store = store
         self.stack = stack
@@ -38,7 +32,10 @@ final class PermissionPromptPanelManager {
     }
 
     func present(_ request: PermissionPromptRequest) {
-        guard !Self.toolsRoutedAwayFromPanel.contains(request.toolName) else { return }
+        // AskUserQuestion 走 PreToolUse hook + AskUserQuestionPanelManager 那条线;
+        // helper 端 PermissionRequest+AskUserQuestion 直接 allow,理论上不会送到这里,
+        // kind 过滤是双保险。
+        guard request.kind == .permission else { return }
         guard !entries.contains(where: { $0.id == request.id }) else { return }
         let panel = PermissionPromptPanel(request: request) { [weak self] outcome in
             self?.handleResponse(id: request.id, outcome: outcome)
