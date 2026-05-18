@@ -174,7 +174,7 @@ final class PermissionPromptPanel: NSPanel, NSWindowDelegate {
     private func makeButtonRow() -> NSView {
         let denyButton = NSButton(title: "拒绝", target: self, action: #selector(deny))
         denyButton.bezelStyle = .rounded
-        denyButton.keyEquivalent = "\u{1B}"  // Esc
+        denyButton.keyEquivalent = "\u{1B}"  // Esc — mirrors KeyboardShortcutCatalog.panelCancel
 
         let allowAlwaysButton = NSButton(title: "一直允许", target: self, action: #selector(allowAlways))
         allowAlwaysButton.bezelStyle = .rounded
@@ -182,7 +182,7 @@ final class PermissionPromptPanel: NSPanel, NSWindowDelegate {
 
         let allowButton = NSButton(title: "允许", target: self, action: #selector(allow))
         allowButton.bezelStyle = .rounded
-        allowButton.keyEquivalent = "\r"  // Return — gets the default-button blue highlight
+        allowButton.keyEquivalent = "\r"  // Return — mirrors KeyboardShortcutCatalog.panelConfirm; gets default-button blue highlight
         self.allowButton = allowButton
 
         // Tab cycle: deny → allowAlways → allow → deny. AppKit walks nextKeyView on Tab.

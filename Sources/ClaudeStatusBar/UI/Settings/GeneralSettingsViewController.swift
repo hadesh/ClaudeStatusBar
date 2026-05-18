@@ -92,6 +92,9 @@ public final class GeneralSettingsViewController: NSViewController {
         stack.addArrangedSubview(showCurrentWindowCheckbox)
         stack.addArrangedSubview(showLifetimeCheckbox)
 
+        // ── 键盘快捷键区段 ────────────────────────────────────────
+        addShortcutsSection(to: stack)
+
         // ── Hook 配置区段 ─────────────────────────────────────────
         let hookSeparator = NSBox()
         hookSeparator.boxType = .separator
@@ -143,15 +146,24 @@ public final class GeneralSettingsViewController: NSViewController {
         hookStatusLabel.preferredMaxLayoutWidth = 420
         stack.addArrangedSubview(hookStatusLabel)
 
-        let container = NSView()
-        container.addSubview(stack)
-        NSLayoutConstraint.activate([
-            stack.topAnchor.constraint(equalTo: container.topAnchor),
-            stack.leadingAnchor.constraint(equalTo: container.leadingAnchor),
-            stack.trailingAnchor.constraint(lessThanOrEqualTo: container.trailingAnchor),
-            stack.bottomAnchor.constraint(equalTo: container.bottomAnchor),
-        ])
-        view = container
+        // 通用 tab 内容已经超过单屏能容纳的高度(快捷键、菜单显示、Hook 配置三组叠
+        // 加),用 NSScrollView 包裹 → 窗口高度固定,内容超出在 tab 内部滚动。
+        // 不这样做的话,SettingsWindowController.resizeWindow 会把窗口拉到
+        // 80(tabbar) + preferredContentSize.height,撑过屏幕顶端时 macOS 会把窗
+        // 口往下推到贴菜单栏,tab bar 视觉上被挤压到标题栏附近。
+        let scrollView = NSScrollView()
+        scrollView.translatesAutoresizingMaskIntoConstraints = false
+        scrollView.hasVerticalScroller = true
+        scrollView.hasHorizontalScroller = false
+        scrollView.autohidesScrollers = true
+        scrollView.drawsBackground = false
+        scrollView.borderType = .noBorder
+
+        scrollView.documentView = stack
+        // 让 stack 撑满 scrollView 的可见宽度,避免出现水平滚动条 / 内容右贴边。
+        stack.widthAnchor.constraint(equalTo: scrollView.contentView.widthAnchor).isActive = true
+
+        view = scrollView
         preferredContentSize = NSSize(width: 510, height: 580)
 
         sync()
@@ -211,6 +223,59 @@ public final class GeneralSettingsViewController: NSViewController {
 
     @objc private func toggleShowLifetime(_ sender: NSButton) {
         settings.showLifetimeUsage = sender.state == .on
+    }
+
+    // MARK: - 键盘快捷键
+
+    /// 数据源:`KeyboardShortcutCatalog.all`。本视图只读,改键直接改 catalog;
+    /// 实际注册由 MenuController / PermissionPromptPanelManager / MenuBuilder 各自负责。
+    private func addShortcutsSection(to stack: NSStackView) {
+        let separator = NSBox()
+        separator.boxType = .separator
+        separator.translatesAutoresizingMaskIntoConstraints = false
+        separator.heightAnchor.constraint(equalToConstant: 1).isActive = true
+        stack.addArrangedSubview(separator)
+
+        let header = NSTextField(labelWithString: "键盘快捷键")
+        header.font = .boldSystemFont(ofSize: NSFont.systemFontSize)
+        stack.addArrangedSubview(header)
+
+        let grid = NSGridView()
+        grid.translatesAutoresizingMaskIntoConstraints = false
+        grid.rowSpacing = 8
+        grid.columnSpacing = 16
+
+        for shortcut in KeyboardShortcutCatalog.all {
+            let comboLabel = NSTextField(labelWithString: shortcut.combo.displayString)
+            comboLabel.font = .monospacedSystemFont(ofSize: NSFont.systemFontSize, weight: .regular)
+            comboLabel.isSelectable = true
+
+            let titleLabel = NSTextField(labelWithString: shortcut.title)
+            titleLabel.isSelectable = true
+
+            let detailParts = [shortcut.scope.label, shortcut.note].compactMap { $0 }
+            let detailLabel = NSTextField(labelWithString: detailParts.joined(separator: " · "))
+            detailLabel.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
+            detailLabel.textColor = .secondaryLabelColor
+            detailLabel.lineBreakMode = .byWordWrapping
+            detailLabel.maximumNumberOfLines = 0
+            detailLabel.preferredMaxLayoutWidth = 360
+            detailLabel.isSelectable = true
+
+            let rightStack = NSStackView(views: [titleLabel, detailLabel])
+            rightStack.orientation = .vertical
+            rightStack.alignment = .leading
+            rightStack.spacing = 2
+
+            grid.addRow(with: [comboLabel, rightStack])
+        }
+
+        // 组合键串右对齐,跟标题列拉开整齐的视觉间距。
+        grid.column(at: 0).xPlacement = .trailing
+        grid.column(at: 0).leadingPadding = 4
+        grid.rowAlignment = .firstBaseline
+
+        stack.addArrangedSubview(grid)
     }
 
     // MARK: - Hook 配置

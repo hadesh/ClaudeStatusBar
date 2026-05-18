@@ -134,15 +134,19 @@ public enum MenuBuilder {
         let prefsItem = NSMenuItem(
             title: "偏好设置...",
             action: actions.openSettingsSelector,
-            keyEquivalent: ","
+            keyEquivalent: ""
         )
+        KeyboardShortcutCatalog.openSettings.combo.applyToMenuItem(prefsItem)
         prefsItem.target = actions.menuTarget
         menu.addItem(prefsItem)
-        menu.addItem(
-            withTitle: "Quit",
+
+        let quitItem = NSMenuItem(
+            title: "Quit",
             action: #selector(NSApplication.terminate(_:)),
-            keyEquivalent: "q"
+            keyEquivalent: ""
         )
+        KeyboardShortcutCatalog.quit.combo.applyToMenuItem(quitItem)
+        menu.addItem(quitItem)
         return menu
     }
 

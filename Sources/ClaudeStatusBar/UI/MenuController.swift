@@ -1,5 +1,4 @@
 import Cocoa
-import Carbon.HIToolbox
 
 /// 状态栏 status item 的 owner —— 装图标、装菜单、调度刷新。AppDelegate 把
 /// 全部 store/tracker 引用注入进来,自己只负责把数据快照交给 MenuBuilder
@@ -83,9 +82,10 @@ public final class MenuController: NSObject, NSMenuDelegate {
         statusItem = item
         iconAnimator = StatusIconAnimator(button: item.button)
 
+        let combo = KeyboardShortcutCatalog.toggleMenu.combo
         toggleMenuHotkey = GlobalHotkey(
-            keyCode: kVK_ANSI_C,
-            modifiers: controlKey | shiftKey
+            keyCode: combo.carbonKeyCode,
+            modifiers: combo.carbonModifiers
         ) { [weak self] in
             self?.toggleStatusMenu()
         }

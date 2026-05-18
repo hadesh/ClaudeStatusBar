@@ -1,6 +1,5 @@
 import Cocoa
 import Combine
-import Carbon.HIToolbox
 
 /// Owns the collection of `PermissionPromptPanel`s for the in-flight requests.
 /// Subscribes to `store.incoming` to spawn a panel per request and to
@@ -82,11 +81,12 @@ final class PermissionPromptPanelManager {
     }
 
     private func registerHotkeys() {
-        let mods = controlKey | shiftKey
-        allowHotkey = GlobalHotkey(keyCode: kVK_ANSI_Y, modifiers: mods) { [weak self] in
+        let allow = KeyboardShortcutCatalog.allowPanel.combo
+        let deny = KeyboardShortcutCatalog.denyPanel.combo
+        allowHotkey = GlobalHotkey(keyCode: allow.carbonKeyCode, modifiers: allow.carbonModifiers) { [weak self] in
             self?.resolveLatest(.allow)
         }
-        denyHotkey = GlobalHotkey(keyCode: kVK_ANSI_N, modifiers: mods) { [weak self] in
+        denyHotkey = GlobalHotkey(keyCode: deny.carbonKeyCode, modifiers: deny.carbonModifiers) { [weak self] in
             self?.resolveLatest(.deny)
         }
     }
