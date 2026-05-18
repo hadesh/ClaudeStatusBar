@@ -174,4 +174,108 @@ final class HookProcessorTests: XCTestCase {
         )
         XCTAssertNil(decision["updatedPermissions"])
     }
+
+    // MARK: - PreToolUse / AskUserQuestion 分流
+
+    func testPreToolUseAskUserQuestionEmitsAnswerEnvelope() throws {
+        let stdin = Data(#"""
+        {"hook_event_name":"PreToolUse","tool_name":"AskUserQuestion","tool_input":{"questions":[{"question":"颜色?","options":[{"label":"红"},{"label":"蓝"}]}]},"session_id":"s","cwd":"/p"}
+        """#.utf8)
+        var capturedRequest: Data?
+        let output = HookProcessor.process(input: stdin) { req in
+            capturedRequest = req
+            return Data(#"""
+            {"id":"x","behavior":"allow","updatedInput":{"questions":[{"question":"颜色?","options":[{"label":"红"},{"label":"蓝"}]}],"answers":{"颜色?":"红"}}}
+            """#.utf8)
+        }
+
+        // socket payload 标记 kind=askUserQuestion 让 listener 路由到正确 manager。
+        let socketReq = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: capturedRequest!) as? [String: Any]
+        )
+        XCTAssertEqual(socketReq["kind"] as? String, "askUserQuestion")
+        XCTAssertEqual(socketReq["toolName"] as? String, "AskUserQuestion")
+
+        // stdout envelope 走 PreToolUse short-circuit schema(changelog 1212)。
+        let parsed = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: output!) as? [String: Any]
+        )
+        let hso = try XCTUnwrap(parsed["hookSpecificOutput"] as? [String: Any])
+        XCTAssertEqual(hso["hookEventName"] as? String, "PreToolUse")
+        XCTAssertEqual(hso["permissionDecision"] as? String, "allow")
+        XCTAssertNotNil(hso["permissionDecisionReason"])
+        let updated = try XCTUnwrap(hso["updatedInput"] as? [String: Any])
+        let answers = try XCTUnwrap(updated["answers"] as? [String: Any])
+        XCTAssertEqual(answers["颜色?"] as? String, "红")
+        XCTAssertNotNil(updated["questions"], "原 questions 必须原样回传")
+    }
+
+    func testPreToolUseAskUserQuestionAbandonReturnsNil() {
+        // 用户在浮窗里点 ✕ → store 回 nil → listener 关 fd → helper 这边
+        // socketCall 也返回 nil(EOF),processor 应吐 nil 让终端 select 接管。
+        let stdin = Data(#"""
+        {"hook_event_name":"PreToolUse","tool_name":"AskUserQuestion","tool_input":{}}
+        """#.utf8)
+        let output = HookProcessor.process(input: stdin) { _ in nil }
+        XCTAssertNil(output)
+    }
+
+    func testPreToolUseAskUserQuestionDenyReturnsNil() {
+        // 防御:即使 socket 异常返回 deny,也别拼一个 PreToolUse deny envelope
+        // 出去——直接 nil 走终端兜底更安全。
+        let stdin = Data(#"""
+        {"hook_event_name":"PreToolUse","tool_name":"AskUserQuestion","tool_input":{}}
+        """#.utf8)
+        let output = HookProcessor.process(input: stdin) { _ in
+            Data(#"{"behavior":"deny","message":"bad"}"#.utf8)
+        }
+        XCTAssertNil(output)
+    }
+
+    func testPreToolUseNonAskUserQuestionReturnsNil() {
+        // PreToolUse hook 在 settings.json 里 matcher 写死 AskUserQuestion;
+        // 万一别的工具触发了(用户配错 matcher),helper 应 fallback,不发 socket。
+        let stdin = Data(#"""
+        {"hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"ls"}}
+        """#.utf8)
+        let output = HookProcessor.process(input: stdin) { _ in
+            XCTFail("socket should not be called for non-AskUserQuestion in PreToolUse")
+            return nil
+        }
+        XCTAssertNil(output)
+    }
+
+    func testPermissionRequestAskUserQuestionReturnsNilSoCLIFallsBackToTerminal() {
+        // D2:PermissionRequest+AskUserQuestion 完全不响应。
+        // 关键:**不能输出 "allow" envelope** —— 那会让 CLI 跳过 AskUserQuestion
+        // 的终端 select,使「跳回终端答」逃生口失效(用户在浮窗 abandon 后,
+        // 终端不出 select,模型收到空答复)。return nil 让 CLI 走默认 flow
+        // (AskUserQuestion 是 built-in 工具默认 allow → 工具执行 → 终端 select)。
+        let stdin = Data(#"""
+        {"hook_event_name":"PermissionRequest","tool_name":"AskUserQuestion","tool_input":{"questions":[]}}
+        """#.utf8)
+        let output = HookProcessor.process(input: stdin) { _ in
+            XCTFail("socket should not be called for AskUserQuestion via PermissionRequest")
+            return nil
+        }
+        XCTAssertNil(output, "AskUserQuestion via PermissionRequest must return nil, not allow envelope")
+    }
+
+    func testUnknownHookEventReturnsNil() {
+        let stdin = Data(#"""
+        {"hook_event_name":"PostToolUse","tool_name":"Bash","tool_input":{}}
+        """#.utf8)
+        let output = HookProcessor.process(input: stdin) { _ in nil }
+        XCTAssertNil(output)
+    }
+
+    func testPermissionRequestWithoutEventNameStillWorks() {
+        // 旧版 Claude Code(2.1.85 之前)的 PermissionRequest hook 不写
+        // hook_event_name,缺省解释为 PermissionRequest 才能保持向后兼容。
+        // 这条用例覆盖 Self.validInput 不含 hook_event_name 字段的现状。
+        let output = HookProcessor.process(input: Self.validInput) { _ in
+            Data(#"{"behavior":"allow"}"#.utf8)
+        }
+        XCTAssertNotNil(output)
+    }
 }

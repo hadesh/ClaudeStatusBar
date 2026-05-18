@@ -25,6 +25,23 @@ final class PermissionPromptTests: XCTestCase {
         XCTAssertNil(req.sessionId)
     }
 
+    func testRequestDefaultsKindToPermissionWhenAbsent() throws {
+        // 旧 helper 二进制(没写 kind 字段)发来的 wire payload 必须解码为
+        // .permission,行为不变。
+        let raw = #"{"id":"x","toolName":"Read","input":{}}"#
+        let req = try JSONDecoder().decode(PermissionPromptRequest.self, from: Data(raw.utf8))
+        XCTAssertEqual(req.kind, .permission)
+    }
+
+    func testRequestAskUserQuestionKindRoundTrips() throws {
+        let raw = #"{"id":"x","toolName":"AskUserQuestion","input":{},"kind":"askUserQuestion"}"#
+        let req = try JSONDecoder().decode(PermissionPromptRequest.self, from: Data(raw.utf8))
+        XCTAssertEqual(req.kind, .askUserQuestion)
+        let encoded = try JSONEncoder().encode(req)
+        let again = try JSONDecoder().decode(PermissionPromptRequest.self, from: encoded)
+        XCTAssertEqual(again.kind, .askUserQuestion)
+    }
+
     func testAllowDecisionEncodesUpdatedInput() throws {
         let d = PermissionPromptDecision.allow(id: "x", input: ["command": .string("ls")])
         let data = try JSONEncoder().encode(d)

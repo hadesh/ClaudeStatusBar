@@ -39,6 +39,15 @@ public enum JSONValue: Equatable, Codable {
     }
 }
 
+/// 标记请求来自哪条 hook 管线。`PermissionPromptPanelManager` 只处理
+/// `.permission`,`AskUserQuestionPanelManager` 只处理 `.askUserQuestion`。
+/// helper 按 stdin 的 `hook_event_name` 分流后写入这个字段;旧 helper(没写
+/// kind 字段的二进制)解码缺省到 `.permission`,行为不变。
+public enum PromptKind: String, Codable {
+    case permission
+    case askUserQuestion
+}
+
 /// Helper → app: a single permission request awaiting user decision.
 public struct PermissionPromptRequest: Codable, Equatable {
     public let id: String
@@ -50,19 +59,32 @@ public struct PermissionPromptRequest: Codable, Equatable {
     /// Stable Claude Code session UUID. Surfaced as a short suffix on the
     /// panel so concurrent sessions for the same project can be told apart.
     public let sessionId: String?
+    public let kind: PromptKind
 
     public init(
         id: String,
         toolName: String,
         input: [String: JSONValue],
         cwd: String? = nil,
-        sessionId: String? = nil
+        sessionId: String? = nil,
+        kind: PromptKind = .permission
     ) {
         self.id = id
         self.toolName = toolName
         self.input = input
         self.cwd = cwd
         self.sessionId = sessionId
+        self.kind = kind
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.id = try c.decode(String.self, forKey: .id)
+        self.toolName = try c.decode(String.self, forKey: .toolName)
+        self.input = try c.decode([String: JSONValue].self, forKey: .input)
+        self.cwd = try c.decodeIfPresent(String.self, forKey: .cwd)
+        self.sessionId = try c.decodeIfPresent(String.self, forKey: .sessionId)
+        self.kind = (try c.decodeIfPresent(PromptKind.self, forKey: .kind)) ?? .permission
     }
 }
 
