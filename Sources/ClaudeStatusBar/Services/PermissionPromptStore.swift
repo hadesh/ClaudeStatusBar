@@ -1,6 +1,14 @@
 import Foundation
 import Combine
 
+/// `NotificationOrchestrator` 需要的最小子集 —— 只暴露「读 pending sessionId」和
+/// 「按 sessionId 关闭浮窗」两个动作。让 Orchestrator 不依赖 PermissionPromptStore
+/// 的全部 API,单测注入内存实现即可。
+public protocol PermissionPromptGating: AnyObject {
+    func pendingSessionIds() -> Set<String>
+    func abandonAll(sessionId: String)
+}
+
 /// Holds in-flight permission prompts. Each entry carries a reply closure that
 /// resolves the originating socket connection. Auto-denies after `timeout`.
 ///
@@ -8,7 +16,7 @@ import Combine
 /// without writing any response, so the helper exits without writing stdout
 /// and the CLI's terminal prompt wins the race. Used when the user dismisses
 /// the panel via ✕ (intent: "let me answer in the terminal").
-public final class PermissionPromptStore {
+public final class PermissionPromptStore: PermissionPromptGating {
     public typealias Reply = (PermissionPromptDecision?) -> Void
     /// (interval, work) -> cancel. Lets tests inject deterministic timing.
     public typealias Scheduler = (TimeInterval, @escaping () -> Void) -> () -> Void

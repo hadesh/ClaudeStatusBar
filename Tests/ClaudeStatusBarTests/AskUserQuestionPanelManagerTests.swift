@@ -4,9 +4,20 @@ import Combine
 
 final class AskUserQuestionPanelManagerTests: XCTestCase {
 
+    private func makeManager(
+        store: PermissionPromptStore,
+        navigator: TerminalActivating = NoopNavigator()
+    ) -> AskUserQuestionPanelManager {
+        AskUserQuestionPanelManager(
+            store: store,
+            stack: FloatingPanelStack(),
+            navigator: navigator
+        )
+    }
+
     func testIncomingNonAskUserQuestionIgnored() {
         let store = PermissionPromptStore()
-        let manager = AskUserQuestionPanelManager(store: store, navigator: NoopNavigator())
+        let manager = makeManager(store: store)
         store.add(
             PermissionPromptRequest(id: "1", toolName: "Bash", input: [:]),
             reply: { _ in }
@@ -17,7 +28,7 @@ final class AskUserQuestionPanelManagerTests: XCTestCase {
 
     func testIncomingAskUserQuestionPresentsPanel() {
         let store = PermissionPromptStore()
-        let manager = AskUserQuestionPanelManager(store: store, navigator: NoopNavigator())
+        let manager = makeManager(store: store)
         store.add(
             PermissionPromptRequest(id: "1", toolName: "AskUserQuestion", input: [:]),
             reply: { _ in }
@@ -28,7 +39,7 @@ final class AskUserQuestionPanelManagerTests: XCTestCase {
 
     func testResolvedDismissesPanel() {
         let store = PermissionPromptStore()
-        let manager = AskUserQuestionPanelManager(store: store, navigator: NoopNavigator())
+        let manager = makeManager(store: store)
         store.add(
             PermissionPromptRequest(id: "x", toolName: "AskUserQuestion", input: [:]),
             reply: { _ in }
@@ -43,7 +54,7 @@ final class AskUserQuestionPanelManagerTests: XCTestCase {
     func testGoToTerminalAbandonsAndNavigates() {
         let store = PermissionPromptStore()
         let nav = RecordingNavigator()
-        let manager = AskUserQuestionPanelManager(store: store, navigator: nav)
+        let manager = makeManager(store: store, navigator: nav)
         var captured: PermissionPromptDecision??
         store.add(
             PermissionPromptRequest(

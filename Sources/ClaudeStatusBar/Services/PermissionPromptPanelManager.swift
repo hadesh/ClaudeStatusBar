@@ -11,11 +11,9 @@ import Carbon.HIToolbox
 /// `receive(on:)` operator.
 final class PermissionPromptPanelManager {
     private let store: PermissionPromptStore
+    private let stack: FloatingPanelStack
     private var entries: [(id: String, panel: PermissionPromptPanel)] = []
     private var cancellables = Set<AnyCancellable>()
-
-    private let edgeInset: CGFloat = 20
-    private let stackGap: CGFloat = 12
 
     private var allowHotkey: GlobalHotkey?
     private var denyHotkey: GlobalHotkey?
@@ -26,8 +24,9 @@ final class PermissionPromptPanelManager {
     /// 本期不代答)。本管理器对它们直接 early-return。
     static let toolsRoutedAwayFromPanel: Set<String> = ["AskUserQuestion"]
 
-    init(store: PermissionPromptStore) {
+    init(store: PermissionPromptStore, stack: FloatingPanelStack) {
         self.store = store
+        self.stack = stack
         store.incoming
             .receive(on: DispatchQueue.main)
             .sink { [weak self] req in self?.present(req) }
@@ -48,19 +47,19 @@ final class PermissionPromptPanelManager {
         if entries.count == 1 {
             registerHotkeys()
         }
-        layout()
+        stack.register(panel, owner: "permission:\(request.id)")
         panel.orderFrontRegardless()
     }
 
     func dismiss(id: String) {
         guard let idx = entries.firstIndex(where: { $0.id == id }) else { return }
         let panel = entries.remove(at: idx).panel
+        stack.unregister(panel)
         panel.orderOut(nil)
         panel.close()
         if entries.isEmpty {
             unregisterHotkeys()
         }
-        layout()
     }
 
     /// Resolves the **most recent** pending panel — what the user means by
@@ -82,18 +81,6 @@ final class PermissionPromptPanelManager {
             store.resolveDeny(id: id, message: "User denied via status bar")
         case .abandon:
             store.abandon(id: id)
-        }
-    }
-
-    private func layout() {
-        guard let screen = NSScreen.main else { return }
-        let frame = screen.visibleFrame
-        let x = frame.maxX - PermissionPromptPanel.panelWidth - edgeInset
-        var y = frame.maxY - edgeInset
-        for (_, panel) in entries {
-            y -= panel.frame.height
-            panel.setFrameOrigin(NSPoint(x: x, y: y))
-            y -= stackGap
         }
     }
 

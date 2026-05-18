@@ -1,10 +1,18 @@
 import Foundation
 import UserNotifications
 
+/// `NotificationOrchestrator` 看到的最小通知派发接口。把 `WaitingNotifier` 抽成
+/// protocol 后,Orchestrator 的单测可以注入一个内存 stub,不必真的调
+/// `UNUserNotificationCenter` 或起 osascript 子进程。
+public protocol WaitingNotifying: AnyObject {
+    func notify(session: Session)
+    func notifyCompletion(session: Session)
+}
+
 /// Posts the "session entered waiting" banner. Stateless aside from a feature
 /// flag. The `UNUserNotificationCenter` delegate seat is owned by
 /// `NotificationDispatcher`; click routing to the terminal lives there.
-public final class WaitingNotifier {
+public final class WaitingNotifier: WaitingNotifying {
     private let useUN: Bool
 
     public init() {
